@@ -241,7 +241,48 @@ module.exports = class OnvifServer {
     }
 
     handleMediaService(soapBody) {
-        if (soapBody.includes('GetProfiles')) {
+        if (soapBody.includes('GetProfile') && !soapBody.includes('GetProfiles')) {
+            // GetProfile (single) - return specific profile by token
+            let profileToken = 'main_stream';
+            if (soapBody.includes('sub_stream')) {
+                profileToken = 'sub_stream';
+            }
+            const profile = this.profiles.find(p => p.token === profileToken) || this.profiles[0];
+
+            return this.createSoapEnvelope(`
+                <trt:GetProfileResponse>
+                    <trt:Profile token="${profile.token}">
+                        <tt:Name>${profile.Name}</tt:Name>
+                        <tt:VideoSourceConfiguration token="${profile.VideoSourceConfiguration.token}">
+                            <tt:Name>${profile.VideoSourceConfiguration.Name}</tt:Name>
+                            <tt:UseCount>${profile.VideoSourceConfiguration.UseCount}</tt:UseCount>
+                            <tt:SourceToken>${profile.VideoSourceConfiguration.SourceToken}</tt:SourceToken>
+                            <tt:Bounds x="${profile.VideoSourceConfiguration.Bounds.x}" y="${profile.VideoSourceConfiguration.Bounds.y}"
+                                       width="${profile.VideoSourceConfiguration.Bounds.width}" height="${profile.VideoSourceConfiguration.Bounds.height}"/>
+                        </tt:VideoSourceConfiguration>
+                        <tt:VideoEncoderConfiguration token="${profile.VideoEncoderConfiguration.token}">
+                            <tt:Name>${profile.VideoEncoderConfiguration.Name}</tt:Name>
+                            <tt:UseCount>${profile.VideoEncoderConfiguration.UseCount}</tt:UseCount>
+                            <tt:Encoding>${profile.VideoEncoderConfiguration.Encoding}</tt:Encoding>
+                            <tt:Resolution>
+                                <tt:Width>${profile.VideoEncoderConfiguration.Resolution.Width}</tt:Width>
+                                <tt:Height>${profile.VideoEncoderConfiguration.Resolution.Height}</tt:Height>
+                            </tt:Resolution>
+                            <tt:Quality>${profile.VideoEncoderConfiguration.Quality}</tt:Quality>
+                            <tt:RateControl>
+                                <tt:FrameRateLimit>${profile.VideoEncoderConfiguration.RateControl.FrameRateLimit}</tt:FrameRateLimit>
+                                <tt:EncodingInterval>${profile.VideoEncoderConfiguration.RateControl.EncodingInterval}</tt:EncodingInterval>
+                                <tt:BitrateLimit>${profile.VideoEncoderConfiguration.RateControl.BitrateLimit}</tt:BitrateLimit>
+                            </tt:RateControl>
+                            <tt:H264>
+                                <tt:GovLength>${profile.VideoEncoderConfiguration.H264.GovLength}</tt:GovLength>
+                                <tt:H264Profile>${profile.VideoEncoderConfiguration.H264.H264Profile}</tt:H264Profile>
+                            </tt:H264>
+                        </tt:VideoEncoderConfiguration>
+                    </trt:Profile>
+                </trt:GetProfileResponse>
+            `);
+        } else if (soapBody.includes('GetProfiles')) {
             let profilesXml = this.profiles.map(profile => `
                 <trt:Profiles token="${profile.token}">
                     <tt:Name>${profile.Name}</tt:Name>
