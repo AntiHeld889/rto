@@ -197,11 +197,24 @@ module.exports = class OnvifServer {
                                 <tt:RTP_TCP>true</tt:RTP_TCP>
                                 <tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP>
                             </tt:StreamingCapabilities>
+                            <tt:SnapshotUri>true</tt:SnapshotUri>
                         </tt:Media>
                     </tds:Capabilities>
                 </tds:GetCapabilitiesResponse>
             `);
         } else if (soapBody.includes('GetServices')) {
+            // Check if client wants capabilities included
+            const includeCapability = soapBody.includes('IncludeCapability>true') ||
+                                     soapBody.includes('IncludeCapability="true"');
+
+            const mediaCapabilities = includeCapability ? `
+                        <tds:Capabilities>
+                            <trt:Capabilities SnapshotUri="true" Rotation="false" VideoSourceMode="false" xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
+                                <trt:ProfileCapabilities MaximumNumberOfProfiles="2"/>
+                                <trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="true" RTP_RTSP_TCP="true"/>
+                            </trt:Capabilities>
+                        </tds:Capabilities>` : '';
+
             return this.createSoapEnvelope(`
                 <tds:GetServicesResponse>
                     <tds:Service>
@@ -218,7 +231,7 @@ module.exports = class OnvifServer {
                         <tds:Version>
                             <tt:Major>2</tt:Major>
                             <tt:Minor>5</tt:Minor>
-                        </tds:Version>
+                        </tds:Version>${mediaCapabilities}
                     </tds:Service>
                 </tds:GetServicesResponse>
             `);
