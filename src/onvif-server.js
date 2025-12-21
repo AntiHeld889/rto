@@ -300,10 +300,8 @@ module.exports = class OnvifServer {
                 </trt:GetStreamUriResponse>
             `);
         } else if (soapBody.includes('GetSnapshotUri')) {
-            let uri = `http://${this.config.hostname}:${this.config.ports.server}/snapshot.png`;
-            if (this.config.highQuality.snapshot) {
-                uri = `http://${this.config.hostname}:${this.config.ports.snapshot}${this.config.highQuality.snapshot}`;
-            }
+            // Use local HTTP proxy endpoint for reliable snapshot delivery
+            let uri = `http://${this.config.hostname}:${this.config.ports.server}/snapshot`;
 
             return this.createSoapEnvelope(`
                 <trt:GetSnapshotUriResponse>
@@ -329,6 +327,7 @@ module.exports = class OnvifServer {
             const pathname = url.parse(request.url).pathname;
 
             if (pathname === '/snapshot.png') {
+                // Serve static placeholder image
                 try {
                     const imagePath = path.join(process.cwd(), 'resources', 'snapshot.png');
                     const image = fs.readFileSync(imagePath);
@@ -338,6 +337,46 @@ module.exports = class OnvifServer {
                     response.writeHead(404, { 'Content-Type': 'text/plain' });
                     response.end('Snapshot not found');
                 }
+            } else if (pathname === '/snapshot') {
+                // Proxy snapshot from target server via HTTP
+                // This is more reliable than TCP proxy for large binary data
+                const snapshotPath = self.config.highQuality?.snapshot;
+                if (!snapshotPath || !self.config.target?.hostname || !self.config.target?.ports?.snapshot) {
+                    // Fallback to static placeholder
+                    try {
+                        const imagePath = path.join(process.cwd(), 'resources', 'snapshot.png');
+                        const image = fs.readFileSync(imagePath);
+                        response.writeHead(200, { 'Content-Type': 'image/png' });
+                        response.end(image, 'binary');
+                    } catch (err) {
+                        response.writeHead(404, { 'Content-Type': 'text/plain' });
+                        response.end('Snapshot not found');
+                    }
+                    return;
+                }
+
+                const targetUrl = `http://${self.config.target.hostname}:${self.config.target.ports.snapshot}${snapshotPath}`;
+
+                http.get(targetUrl, (proxyRes) => {
+                    const chunks = [];
+                    proxyRes.on('data', chunk => chunks.push(chunk));
+                    proxyRes.on('end', () => {
+                        const buffer = Buffer.concat(chunks);
+                        response.writeHead(proxyRes.statusCode, {
+                            'Content-Type': proxyRes.headers['content-type'] || 'image/jpeg',
+                            'Content-Length': buffer.length,
+                            'Cache-Control': 'no-cache'
+                        });
+                        response.end(buffer);
+                    });
+                    proxyRes.on('error', (err) => {
+                        response.writeHead(502, { 'Content-Type': 'text/plain' });
+                        response.end('Snapshot proxy error');
+                    });
+                }).on('error', (err) => {
+                    response.writeHead(502, { 'Content-Type': 'text/plain' });
+                    response.end('Snapshot request error');
+                });
             } else if (pathname === '/onvif/device_service') {
                 if (request.method === 'GET') {
                     try {
