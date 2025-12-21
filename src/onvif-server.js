@@ -1,11 +1,10 @@
-const soap = require('soap');
 const http = require('http');
 const dgram = require('dgram');
 const xml2js = require('xml2js');
-const uuid = require('node-uuid');
+const { v1: uuidv1 } = require('uuid');
 const url = require('url');
 const fs = require('fs');
-const logger = require('simple-node-logger');
+const path = require('path');
 
 const { getIp4FromMac } = require('./net-tools')
 
@@ -29,9 +28,7 @@ module.exports = class OnvifServer {
             return -1;
 
         this.videoSource = {
-            attributes: {
-                token: 'video_src_token'
-            },
+            token: 'video_src_token',
             Framerate: this.config.highQuality.framerate,
             Resolution: { Width: this.config.highQuality.width, Height: this.config.highQuality.height }
         };
@@ -39,22 +36,16 @@ module.exports = class OnvifServer {
         this.profiles = [
             {
                 Name: 'MainStream',
-                attributes: {
-                    token: 'main_stream'
-                },
+                token: 'main_stream',
                 VideoSourceConfiguration: {
                     Name: 'VideoSource',
                     UseCount: 2,
-                    attributes: {
-                        token: 'video_src_config_token'
-                    },
+                    token: 'video_src_config_token',
                     SourceToken: 'video_src_token',
-                    Bounds: { attributes: { x: 0, y: 0, width: this.config.highQuality.width, height: this.config.highQuality.height } }
+                    Bounds: { x: 0, y: 0, width: this.config.highQuality.width, height: this.config.highQuality.height }
                 },
                 VideoEncoderConfiguration: {
-                    attributes: {
-                        token: 'encoder_hq_config_token'
-                    },
+                    token: 'encoder_hq_config_token',
                     Name: 'CardinalHqCameraConfiguration',
                     UseCount: 1,
                     Encoding: 'H264',
@@ -78,306 +69,340 @@ module.exports = class OnvifServer {
         ];
 
         if (this.config.lowQuality) {
-            this.profiles.push(
-                {
-                    Name: 'SubStream',
-                    attributes: {
-                        token: 'sub_stream'
+            this.profiles.push({
+                Name: 'SubStream',
+                token: 'sub_stream',
+                VideoSourceConfiguration: {
+                    Name: 'VideoSource',
+                    UseCount: 2,
+                    token: 'video_src_config_token',
+                    SourceToken: 'video_src_token',
+                    Bounds: { x: 0, y: 0, width: this.config.highQuality.width, height: this.config.highQuality.height }
+                },
+                VideoEncoderConfiguration: {
+                    token: 'encoder_lq_config_token',
+                    Name: 'CardinalLqCameraConfiguration',
+                    UseCount: 1,
+                    Encoding: 'H264',
+                    Resolution: {
+                        Width: this.config.lowQuality.width,
+                        Height: this.config.lowQuality.height
                     },
-                    VideoSourceConfiguration: {
-                        Name: 'VideoSource',
-                        UseCount: 2,
-                        attributes: {
-                            token: 'video_src_config_token'
-                        },
-                        SourceToken: 'video_src_token',
-                        Bounds: { attributes: { x: 0, y: 0, width: this.config.highQuality.width, height: this.config.highQuality.height } }
+                    Quality: this.config.lowQuality.quality,
+                    RateControl: {
+                        FrameRateLimit: this.config.lowQuality.framerate,
+                        EncodingInterval: 1,
+                        BitrateLimit: this.config.lowQuality.bitrate
                     },
-                    VideoEncoderConfiguration: {
-                        attributes: {
-                            token: 'encoder_lq_config_token'
-                        },
-                        Name: 'CardinalLqCameraConfiguration',
-                        UseCount: 1,
-                        Encoding: 'H264',
-                        Resolution: {
-                            Width: this.config.lowQuality.width,
-                            Height: this.config.lowQuality.height
-                        },
-                        Quality: this.config.lowQuality.quality,
-                        RateControl: {
-                            FrameRateLimit: this.config.lowQuality.framerate,
-                            EncodingInterval: 1,
-                            BitrateLimit: this.config.lowQuality.bitrate
-                        },
-                        H264: {
-                            GovLength: this.config.lowQuality.framerate,
-                            H264Profile: 'Main'
-                        },
-                        SessionTimeout: 'PT1000S'
-                    }
+                    H264: {
+                        GovLength: this.config.lowQuality.framerate,
+                        H264Profile: 'Main'
+                    },
+                    SessionTimeout: 'PT1000S'
                 }
-            );
+            });
         }
-
-        this.onvif = {
-            DeviceService: {
-                Device: {
-                    GetSystemDateAndTime: (args) => {
-                        let now = new Date();
-
-                        let offset = now.getTimezoneOffset();
-                        let abs_offset = Math.abs(offset);
-                        let hrs_offset = Math.floor(abs_offset / 60);
-                        let mins_offset = (abs_offset % 60);
-                        let tz = 'UTC' + (offset < 0 ? '-' : '+') + hrs_offset + (mins_offset === 0 ? '' : ':' + mins_offset);
-
-                        return {
-                            SystemDateAndTime: {
-                                DateTimeType: 'NTP',
-                                DaylightSavings: now.isDstObserved(),
-                                TimeZone: {
-                                    TZ: tz
-                                },
-                                UTCDateTime: {
-                                    Time: { Hour: now.getUTCHours(), Minute: now.getUTCMinutes(), Second: now.getUTCSeconds() },
-                                    Date: { Year: now.getUTCFullYear(), Month: now.getUTCMonth() + 1, Day: now.getUTCDate() }
-                                },
-                                LocalDateTime: {
-                                    Time: { Hour: now.getHours(), Minute: now.getMinutes(), Second: now.getSeconds() },
-                                    Date: { Year: now.getFullYear(), Month: now.getMonth() + 1, Day: now.getDate() }
-                                },
-                                Extension: {}
-                            }
-                        };
-                    },
-
-                    GetCapabilities: (args) => {
-                        let response = {
-                            Capabilities: {}
-                        };
-
-                        if (args.Category === undefined || args.Category == 'All' || args.Category == 'Device') {
-                            response.Capabilities['Device'] = {
-                                XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service`,
-                                Network: {
-                                    IPFilter: false,
-                                    ZeroConfiguration: false,
-                                    IPVersion6: false,
-                                    DynDNS: false,
-                                    Extension: {
-                                        Dot11Configuration: false,
-                                        Extension: {}
-                                    }
-                                },
-                                System: {
-                                    DiscoveryResolve: false,
-                                    DiscoveryBye: false,
-                                    RemoteDiscovery: false,
-                                    SystemBackup: false,
-                                    SystemLogging: false,
-                                    FirmwareUpgrade: false,
-                                    SupportedVersions: {
-                                        Major: 2,
-                                        Minor: 5
-                                    },
-                                    Extension: {
-                                        HttpFirmwareUpgrade: false,
-                                        HttpSystemBackup: false,
-                                        HttpSystemLogging: false,
-                                        HttpSupportInformation: false,
-                                        Extension: {}
-                                    }
-                                },
-                                IO: {
-                                    InputConnectors: 0,
-                                    RelayOutputs: 1,
-                                    Extension: {
-                                        Auxiliary: false,
-                                        AuxiliaryCommands: '',
-                                        Extension: {}
-                                    }
-                                },
-                                Security: {
-                                    'TLS1.1': false,
-                                    'TLS1.2': false,
-                                    OnboardKeyGeneration: false,
-                                    AccessPolicyConfig: false,
-                                    'X.509Token': false,
-                                    SAMLToken: false,
-                                    KerberosToken: false,
-                                    RELToken: false,
-                                    Extension: {
-                                        'TLS1.0': false,
-                                        Extension: {
-                                            Dot1X: false,
-                                            RemoteUserHandling: false
-                                        }
-                                    }
-                                },
-                                Extension: {}
-                            };
-                        }
-                        if (args.Category === undefined || args.Category == 'All' || args.Category == 'Media') {
-                            response.Capabilities['Media'] = {
-                                XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service`,
-                                StreamingCapabilities: {
-                                    RTPMulticast: false,
-                                    RTP_TCP: true,
-                                    RTP_RTSP_TCP: true,
-                                    Extension: {}
-                                },
-                                Extension: {
-                                    ProfileCapabilities: {
-                                        MaximumNumberOfProfiles: this.profiles.length
-                                    }
-                                }
-                            }
-                        }
-
-                        return response;
-                    },
-
-                    GetServices: (args) => {
-                        return {
-                            Service: [
-                                {
-                                    Namespace: 'http://www.onvif.org/ver10/device/wsdl',
-                                    XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service`,
-                                    Version: {
-                                        Major: 2,
-                                        Minor: 5,
-                                    }
-                                },
-                                {
-                                    Namespace: 'http://www.onvif.org/ver10/media/wsdl',
-                                    XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service`,
-                                    Version: {
-                                        Major: 2,
-                                        Minor: 5,
-                                    }
-                                }
-                            ]
-                        };
-                    },
-
-                    GetDeviceInformation: (args) => {
-                        return {
-                            Manufacturer: 'rtsp-2-onvif',
-                            Model: `${this.config.name}`,
-                            FirmwareVersion: '1.0.0',
-                            SerialNumber: `${this.config.name.replace(' ', '_')}-0000`,
-                            HardwareId: `${this.config.name.replace(' ', '_')}-1001`
-                        };
-                    }
-
-                }
-            },
-
-            MediaService: {
-                Media: {
-                    GetProfiles: (args) => {
-                        return {
-                            Profiles: this.profiles
-                        };
-                    },
-
-                    GetVideoSources: (args) => {
-                        return {
-                            VideoSources: [
-                                this.videoSource
-                            ]
-                        };
-                    },
-
-                    GetSnapshotUri: (args) => {
-                        let uri = `http://${this.config.hostname}:${this.config.ports.server}/snapshot.png`;
-                        if (args.ProfileToken == 'sub_stream' && this.config.lowQuality && this.config.lowQuality.snapshot)
-                            uri = `http://${this.config.hostname}:${this.config.ports.snapshot}${this.config.lowQuality.snapshot}`;
-                        else if (this.config.highQuality.snapshot)
-                            uri = `http://${this.config.hostname}:${this.config.ports.snapshot}${this.config.highQuality.snapshot}`;
-
-                        return {
-                            MediaUri: {
-                                Uri: uri,
-                                InvalidAfterConnect: false,
-                                InvalidAfterReboot: false,
-                                Timeout: 'PT30S'
-                            }
-                        };
-                    },
-
-                    GetStreamUri: (args) => {
-                        let path = this.config.highQuality.rtsp;
-                        if (args.ProfileToken == 'sub_stream' && this.config.lowQuality)
-                            path = this.config.lowQuality.rtsp;
-
-                        return {
-                            MediaUri: {
-                                Uri: `rtsp://${this.config.hostname}:${this.config.ports.rtsp}${path}`,
-                                InvalidAfterConnect: false,
-                                InvalidAfterReboot: false,
-                                Timeout: 'PT30S'
-                            }
-                        };
-                    }
-                }
-            }
-        };
     }
 
-    listen(request, response) {
-        let action = url.parse(request.url, true).pathname;
-        if (action == '/snapshot.png') {
-            let image = fs.readFileSync('./resources/snapshot.png');
-            response.writeHead(200, { 'Content-Type': 'image/png' });
-            response.end(image, 'binary');
-        } else {
-            response.writeHead(404, { 'Content-Type': 'text/plain' });
-            response.write('404 Not Found\n');
-            response.end();
+    createSoapEnvelope(body) {
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope
+    xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
+    xmlns:tds="http://www.onvif.org/ver10/device/wsdl"
+    xmlns:trt="http://www.onvif.org/ver10/media/wsdl"
+    xmlns:tt="http://www.onvif.org/ver10/schema">
+    <SOAP-ENV:Body>
+        ${body}
+    </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`;
+    }
+
+    handleDeviceService(soapBody) {
+        if (soapBody.includes('GetSystemDateAndTime')) {
+            let now = new Date();
+            let offset = now.getTimezoneOffset();
+            let abs_offset = Math.abs(offset);
+            let hrs_offset = Math.floor(abs_offset / 60);
+            let mins_offset = (abs_offset % 60);
+            let tz = 'UTC' + (offset > 0 ? '-' : '+') + hrs_offset + (mins_offset === 0 ? '' : ':' + mins_offset);
+
+            return this.createSoapEnvelope(`
+                <tds:GetSystemDateAndTimeResponse>
+                    <tds:SystemDateAndTime>
+                        <tt:DateTimeType>NTP</tt:DateTimeType>
+                        <tt:DaylightSavings>${now.isDstObserved()}</tt:DaylightSavings>
+                        <tt:TimeZone>
+                            <tt:TZ>${tz}</tt:TZ>
+                        </tt:TimeZone>
+                        <tt:UTCDateTime>
+                            <tt:Time>
+                                <tt:Hour>${now.getUTCHours()}</tt:Hour>
+                                <tt:Minute>${now.getUTCMinutes()}</tt:Minute>
+                                <tt:Second>${now.getUTCSeconds()}</tt:Second>
+                            </tt:Time>
+                            <tt:Date>
+                                <tt:Year>${now.getUTCFullYear()}</tt:Year>
+                                <tt:Month>${now.getUTCMonth() + 1}</tt:Month>
+                                <tt:Day>${now.getUTCDate()}</tt:Day>
+                            </tt:Date>
+                        </tt:UTCDateTime>
+                        <tt:LocalDateTime>
+                            <tt:Time>
+                                <tt:Hour>${now.getHours()}</tt:Hour>
+                                <tt:Minute>${now.getMinutes()}</tt:Minute>
+                                <tt:Second>${now.getSeconds()}</tt:Second>
+                            </tt:Time>
+                            <tt:Date>
+                                <tt:Year>${now.getFullYear()}</tt:Year>
+                                <tt:Month>${now.getMonth() + 1}</tt:Month>
+                                <tt:Day>${now.getDate()}</tt:Day>
+                            </tt:Date>
+                        </tt:LocalDateTime>
+                    </tds:SystemDateAndTime>
+                </tds:GetSystemDateAndTimeResponse>
+            `);
+        } else if (soapBody.includes('GetDeviceInformation')) {
+            return this.createSoapEnvelope(`
+                <tds:GetDeviceInformationResponse>
+                    <tds:Manufacturer>rtsp-2-onvif</tds:Manufacturer>
+                    <tds:Model>${this.config.name}</tds:Model>
+                    <tds:FirmwareVersion>1.0.0</tds:FirmwareVersion>
+                    <tds:SerialNumber>${this.config.name.replace(' ', '_')}-0000</tds:SerialNumber>
+                    <tds:HardwareId>${this.config.name.replace(' ', '_')}-1001</tds:HardwareId>
+                </tds:GetDeviceInformationResponse>
+            `);
+        } else if (soapBody.includes('GetCapabilities')) {
+            return this.createSoapEnvelope(`
+                <tds:GetCapabilitiesResponse>
+                    <tds:Capabilities>
+                        <tt:Device>
+                            <tt:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service</tt:XAddr>
+                            <tt:System>
+                                <tt:DiscoveryResolve>false</tt:DiscoveryResolve>
+                                <tt:DiscoveryBye>false</tt:DiscoveryBye>
+                                <tt:RemoteDiscovery>false</tt:RemoteDiscovery>
+                                <tt:SystemBackup>false</tt:SystemBackup>
+                                <tt:SystemLogging>false</tt:SystemLogging>
+                                <tt:FirmwareUpgrade>false</tt:FirmwareUpgrade>
+                                <tt:SupportedVersions>
+                                    <tt:Major>2</tt:Major>
+                                    <tt:Minor>5</tt:Minor>
+                                </tt:SupportedVersions>
+                            </tt:System>
+                        </tt:Device>
+                        <tt:Media>
+                            <tt:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service</tt:XAddr>
+                            <tt:StreamingCapabilities>
+                                <tt:RTPMulticast>false</tt:RTPMulticast>
+                                <tt:RTP_TCP>true</tt:RTP_TCP>
+                                <tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP>
+                            </tt:StreamingCapabilities>
+                        </tt:Media>
+                    </tds:Capabilities>
+                </tds:GetCapabilitiesResponse>
+            `);
+        } else if (soapBody.includes('GetServices')) {
+            return this.createSoapEnvelope(`
+                <tds:GetServicesResponse>
+                    <tds:Service>
+                        <tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>
+                        <tds:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service</tds:XAddr>
+                        <tds:Version>
+                            <tt:Major>2</tt:Major>
+                            <tt:Minor>5</tt:Minor>
+                        </tds:Version>
+                    </tds:Service>
+                    <tds:Service>
+                        <tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace>
+                        <tds:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service</tds:XAddr>
+                        <tds:Version>
+                            <tt:Major>2</tt:Major>
+                            <tt:Minor>5</tt:Minor>
+                        </tds:Version>
+                    </tds:Service>
+                </tds:GetServicesResponse>
+            `);
         }
+
+        return null;
+    }
+
+    handleMediaService(soapBody) {
+        if (soapBody.includes('GetProfiles')) {
+            let profilesXml = this.profiles.map(profile => `
+                <trt:Profiles token="${profile.token}">
+                    <tt:Name>${profile.Name}</tt:Name>
+                    <tt:VideoSourceConfiguration token="${profile.VideoSourceConfiguration.token}">
+                        <tt:Name>${profile.VideoSourceConfiguration.Name}</tt:Name>
+                        <tt:UseCount>${profile.VideoSourceConfiguration.UseCount}</tt:UseCount>
+                        <tt:SourceToken>${profile.VideoSourceConfiguration.SourceToken}</tt:SourceToken>
+                        <tt:Bounds x="${profile.VideoSourceConfiguration.Bounds.x}" y="${profile.VideoSourceConfiguration.Bounds.y}"
+                                   width="${profile.VideoSourceConfiguration.Bounds.width}" height="${profile.VideoSourceConfiguration.Bounds.height}"/>
+                    </tt:VideoSourceConfiguration>
+                    <tt:VideoEncoderConfiguration token="${profile.VideoEncoderConfiguration.token}">
+                        <tt:Name>${profile.VideoEncoderConfiguration.Name}</tt:Name>
+                        <tt:UseCount>${profile.VideoEncoderConfiguration.UseCount}</tt:UseCount>
+                        <tt:Encoding>${profile.VideoEncoderConfiguration.Encoding}</tt:Encoding>
+                        <tt:Resolution>
+                            <tt:Width>${profile.VideoEncoderConfiguration.Resolution.Width}</tt:Width>
+                            <tt:Height>${profile.VideoEncoderConfiguration.Resolution.Height}</tt:Height>
+                        </tt:Resolution>
+                        <tt:Quality>${profile.VideoEncoderConfiguration.Quality}</tt:Quality>
+                        <tt:RateControl>
+                            <tt:FrameRateLimit>${profile.VideoEncoderConfiguration.RateControl.FrameRateLimit}</tt:FrameRateLimit>
+                            <tt:EncodingInterval>${profile.VideoEncoderConfiguration.RateControl.EncodingInterval}</tt:EncodingInterval>
+                            <tt:BitrateLimit>${profile.VideoEncoderConfiguration.RateControl.BitrateLimit}</tt:BitrateLimit>
+                        </tt:RateControl>
+                        <tt:H264>
+                            <tt:GovLength>${profile.VideoEncoderConfiguration.H264.GovLength}</tt:GovLength>
+                            <tt:H264Profile>${profile.VideoEncoderConfiguration.H264.H264Profile}</tt:H264Profile>
+                        </tt:H264>
+                    </tt:VideoEncoderConfiguration>
+                </trt:Profiles>
+            `).join('');
+
+            return this.createSoapEnvelope(`
+                <trt:GetProfilesResponse>
+                    ${profilesXml}
+                </trt:GetProfilesResponse>
+            `);
+        } else if (soapBody.includes('GetVideoSources')) {
+            return this.createSoapEnvelope(`
+                <trt:GetVideoSourcesResponse>
+                    <trt:VideoSources token="${this.videoSource.token}">
+                        <tt:Framerate>${this.videoSource.Framerate}</tt:Framerate>
+                        <tt:Resolution>
+                            <tt:Width>${this.videoSource.Resolution.Width}</tt:Width>
+                            <tt:Height>${this.videoSource.Resolution.Height}</tt:Height>
+                        </tt:Resolution>
+                    </trt:VideoSources>
+                </trt:GetVideoSourcesResponse>
+            `);
+        } else if (soapBody.includes('GetStreamUri')) {
+            let profileToken = 'main_stream';
+            if (soapBody.includes('sub_stream')) {
+                profileToken = 'sub_stream';
+            }
+
+            let rtspPath = this.config.highQuality.rtsp;
+            if (profileToken === 'sub_stream' && this.config.lowQuality) {
+                rtspPath = this.config.lowQuality.rtsp;
+            }
+
+            return this.createSoapEnvelope(`
+                <trt:GetStreamUriResponse>
+                    <trt:MediaUri>
+                        <tt:Uri>rtsp://${this.config.hostname}:${this.config.ports.rtsp}${rtspPath}</tt:Uri>
+                        <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
+                        <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
+                        <tt:Timeout>PT30S</tt:Timeout>
+                    </trt:MediaUri>
+                </trt:GetStreamUriResponse>
+            `);
+        } else if (soapBody.includes('GetSnapshotUri')) {
+            let uri = `http://${this.config.hostname}:${this.config.ports.server}/snapshot.png`;
+            if (this.config.highQuality.snapshot) {
+                uri = `http://${this.config.hostname}:${this.config.ports.snapshot}${this.config.highQuality.snapshot}`;
+            }
+
+            return this.createSoapEnvelope(`
+                <trt:GetSnapshotUriResponse>
+                    <trt:MediaUri>
+                        <tt:Uri>${uri}</tt:Uri>
+                        <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
+                        <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
+                        <tt:Timeout>PT30S</tt:Timeout>
+                    </trt:MediaUri>
+                </trt:GetSnapshotUriResponse>
+            `);
+        }
+
+        return null;
     }
 
     startHttpServer() {
         this.logger.info(`SERVER: ${this.config.name} - HTTP listening on ${this.config.hostname}:${this.config.ports.server}`);
 
-        this.server = http.createServer(this.listen);
+        const self = this;
+
+        this.server = http.createServer((request, response) => {
+            const pathname = url.parse(request.url).pathname;
+
+            if (pathname === '/snapshot.png') {
+                try {
+                    const imagePath = path.join(process.cwd(), 'resources', 'snapshot.png');
+                    const image = fs.readFileSync(imagePath);
+                    response.writeHead(200, { 'Content-Type': 'image/png' });
+                    response.end(image, 'binary');
+                } catch (err) {
+                    response.writeHead(404, { 'Content-Type': 'text/plain' });
+                    response.end('Snapshot not found');
+                }
+            } else if (pathname === '/onvif/device_service') {
+                if (request.method === 'GET') {
+                    try {
+                        const wsdlPath = path.join(process.cwd(), 'wsdl', 'device_service.wsdl');
+                        const wsdl = fs.readFileSync(wsdlPath, 'utf8');
+                        response.writeHead(200, { 'Content-Type': 'text/xml' });
+                        response.end(wsdl);
+                    } catch (err) {
+                        response.writeHead(500, { 'Content-Type': 'text/plain' });
+                        response.end('WSDL not found');
+                    }
+                } else if (request.method === 'POST') {
+                    let body = '';
+                    request.on('data', chunk => body += chunk.toString());
+                    request.on('end', () => {
+                        const soapResponse = self.handleDeviceService(body);
+                        if (soapResponse) {
+                            response.writeHead(200, {
+                                'Content-Type': 'application/soap+xml; charset=utf-8'
+                            });
+                            response.end(soapResponse);
+                        } else {
+                            response.writeHead(500, { 'Content-Type': 'text/plain' });
+                            response.end('Unknown SOAP action');
+                        }
+                    });
+                }
+            } else if (pathname === '/onvif/media_service') {
+                if (request.method === 'GET') {
+                    try {
+                        const wsdlPath = path.join(process.cwd(), 'wsdl', 'media_service.wsdl');
+                        const wsdl = fs.readFileSync(wsdlPath, 'utf8');
+                        response.writeHead(200, { 'Content-Type': 'text/xml' });
+                        response.end(wsdl);
+                    } catch (err) {
+                        response.writeHead(500, { 'Content-Type': 'text/plain' });
+                        response.end('WSDL not found');
+                    }
+                } else if (request.method === 'POST') {
+                    let body = '';
+                    request.on('data', chunk => body += chunk.toString());
+                    request.on('end', () => {
+                        const soapResponse = self.handleMediaService(body);
+                        if (soapResponse) {
+                            response.writeHead(200, {
+                                'Content-Type': 'application/soap+xml; charset=utf-8'
+                            });
+                            response.end(soapResponse);
+                        } else {
+                            response.writeHead(500, { 'Content-Type': 'text/plain' });
+                            response.end('Unknown SOAP action');
+                        }
+                    });
+                }
+            } else {
+                response.writeHead(404, { 'Content-Type': 'text/plain' });
+                response.end('Not found');
+            }
+        });
+
         this.server.listen(this.config.ports.server, this.config.hostname);
-
-        this.deviceService = soap.listen(this.server, {
-            path: '/onvif/device_service',
-            services: this.onvif,
-            xml: fs.readFileSync('./wsdl/device_service.wsdl', 'utf8'),
-            forceSoap12Headers: true
-        });
-       
-
-        this.mediaService = soap.listen(this.server, {
-            path: '/onvif/media_service',
-            services: this.onvif,
-            xml: fs.readFileSync('./wsdl/media_service.wsdl', 'utf8'),
-            forceSoap12Headers: true
-        });
-        
     }
 
     enableDebugOutput() {
-        this.deviceService.log = function(type, data, req){
-            console.debug(`SERVER: ${data}`);
-            //there is no logger in this context
-        };
-        this.mediaService.log = function(type, data, req){
-            console.debug(`SERVER: ${data}`);
-            //there is no logger in this context
-        };
-        // this.deviceService.on('request', (request, methodName) => {
-        //     this.logger.debug(`SERVER: ${this.config.name} - DeviceService: ${methodName}`);
-        // });
-
-        // this.mediaService.on('request', (request, methodName) => {
-        //     this.logger.debug(`SERVER: ${this.config.name} -  MediaService: ${methodName}`);
-        // });
+        // Debug output handled via logger
     }
 
     startDiscovery() {
@@ -405,7 +430,7 @@ module.exports = class OnvifServer {
                         `<?xml version="1.0" encoding="UTF-8"?>
                         <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
                             <SOAP-ENV:Header>
-                                <wsa:MessageID>uuid:${uuid.v1()}</wsa:MessageID>
+                                <wsa:MessageID>uuid:${uuidv1()}</wsa:MessageID>
                                 <wsa:RelatesTo>${probeUuid}</wsa:RelatesTo>
                                 <wsa:To SOAP-ENV:mustUnderstand="true">http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</wsa:To>
                                 <wsa:Action SOAP-ENV:mustUnderstand="true">http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</wsa:Action>
