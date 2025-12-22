@@ -3,8 +3,27 @@ const dgram = require('dgram');
 const xml2js = require('xml2js');
 const { v1: uuidv1 } = require('uuid');
 const url = require('url');
-const fs = require('fs');
-const path = require('path');
+
+// Inline WSDL templates
+const DEVICE_SERVICE_WSDL = `<?xml version="1.0" encoding="utf-8" ?>
+<wsdl:definitions xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:i0="http://www.onvif.org/ver10/device/wsdl" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="http://tempuri.org/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tm="http://microsoft.com/wsdl/mime/textMatching/" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" targetNamespace="http://tempuri.org/">
+  <wsdl:import namespace="http://www.onvif.org/ver10/device/wsdl" location="https://www.onvif.org/ver10/device/wsdl/devicemgmt.wsdl"/>
+  <wsdl:service name="DeviceService">
+    <wsdl:port name="Device" binding="i0:DeviceBinding">
+      <soap:address location="http://localhost:8000/onvif/device_service"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>`;
+
+const MEDIA_SERVICE_WSDL = `<?xml version="1.0" encoding="utf-8" ?>
+<wsdl:definitions xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:i0="http://www.onvif.org/ver10/device/wsdl" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="http://tempuri.org/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tm="http://microsoft.com/wsdl/mime/textMatching/" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" targetNamespace="http://tempuri.org/">
+  <wsdl:import namespace="http://www.onvif.org/ver10/media/wsdl" location="https://www.onvif.org/ver10/media/wsdl/media.wsdl"/>
+  <wsdl:service name="MediaService">
+    <wsdl:port name="Media" binding="i0:MediaBinding">
+      <soap:address location="http://localhost:8000/onvif/media_service" />
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>`;
 
 const { getIp4FromMac } = require('./net-tools')
 
@@ -443,15 +462,8 @@ module.exports = class OnvifServer {
                 });
             } else if (pathname === '/onvif/device_service') {
                 if (request.method === 'GET') {
-                    try {
-                        const wsdlPath = path.join(process.cwd(), 'wsdl', 'device_service.wsdl');
-                        const wsdl = fs.readFileSync(wsdlPath, 'utf8');
-                        response.writeHead(200, { 'Content-Type': 'text/xml' });
-                        response.end(wsdl);
-                    } catch (err) {
-                        response.writeHead(500, { 'Content-Type': 'text/plain' });
-                        response.end('WSDL not found');
-                    }
+                    response.writeHead(200, { 'Content-Type': 'text/xml' });
+                    response.end(DEVICE_SERVICE_WSDL);
                 } else if (request.method === 'POST') {
                     let body = '';
                     request.on('data', chunk => body += chunk.toString());
@@ -479,15 +491,8 @@ module.exports = class OnvifServer {
                 }
             } else if (pathname === '/onvif/media_service') {
                 if (request.method === 'GET') {
-                    try {
-                        const wsdlPath = path.join(process.cwd(), 'wsdl', 'media_service.wsdl');
-                        const wsdl = fs.readFileSync(wsdlPath, 'utf8');
-                        response.writeHead(200, { 'Content-Type': 'text/xml' });
-                        response.end(wsdl);
-                    } catch (err) {
-                        response.writeHead(500, { 'Content-Type': 'text/plain' });
-                        response.end('WSDL not found');
-                    }
+                    response.writeHead(200, { 'Content-Type': 'text/xml' });
+                    response.end(MEDIA_SERVICE_WSDL);
                 } else if (request.method === 'POST') {
                     let body = '';
                     request.on('data', chunk => body += chunk.toString());
