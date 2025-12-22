@@ -36,10 +36,11 @@ Create a directory locally where you will keep your compose and config files.
 
 1. Create a directory and change into it
   - `mkdir rtsp-to-onvif` and `cd rtsp-to-onvif`
-2. Download the compose.yaml file
-  - `wget https://raw.githubusercontent.com/p10tyr/rtsp-to-onvif/refs/heads/release/compose.yaml`
+2. Download the docker-compose.example.yaml file
+  - `wget https://raw.githubusercontent.com/itsmepetrov/rtsp-to-onvif/refs/heads/release/docker-compose.example.yaml`
+  - `cp docker-compose.example.yaml docker-compose.yaml`
 3. Download the config.example.yaml and clone it
-  - `wget https://raw.githubusercontent.com/p10tyr/rtsp-to-onvif/refs/heads/release/config.example.yaml`
+  - `wget https://raw.githubusercontent.com/itsmepetrov/rtsp-to-onvif/refs/heads/release/config.example.yaml`
   - `cp config.example.yaml config.yaml`
 4. Edit and configure your cameras
   - `nano config.yaml`
@@ -83,7 +84,6 @@ onvif:
     ports:                                              # Virtual server ports. No need to change these unles you run into port already in use problems
       server: 8081
       rtsp: 8554
-      snapshot: 8080
     #mac - automatically added here and IP comes from DHCP- Add your own if you know what you doing
     #uuid - ONVIF ID - automatically added here. If you change it Protect will think its a different camera
 ```
@@ -126,10 +126,10 @@ Known Limitations
 
 # 🛜 Docker and Docker Compose
 
-Debug is enabled byu default in compose.yaml
+Debug is enabled by default in docker-compose.example.yaml.
 Once you have setup complete you can disable it.
 
-## compose.yaml file 
+## docker-compose.yaml file 
 
 You don't really have to change anything in this file.
 It has all the settings and permsions required to make it just work.
