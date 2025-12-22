@@ -5,15 +5,22 @@
   "main": "main.js",
   "license": "MIT",
   "author": {
-    "git": "https://github.com/p10tyr/rtsp-to-onvif",
-    "name": "Piotr Kula",
-    "email": "rtsp2onvif@kula.email"
-  },
-  "forked": {
-    "git": "https://github.com/daniela-hase/onvif-server",
     "name": "Daniela Hasenbring",
-    "email": "daniela@koshigaya.de"
+    "email": "daniela@koshigaya.de",
+    "url": "https://github.com/daniela-hase/onvif-server"
   },
+  "contributors": [
+    {
+      "name": "Piotr Kula",
+      "email": "rtsp2onvif@kula.email",
+      "url": "https://github.com/p10tyr/rtsp-to-onvif"
+    },
+    {
+      "name": "Anton Petrov",
+      "email": "anton@itsmepetrov.com",
+      "url": "https://github.com/itsmepetrov/rtsp-to-onvif"
+    }
+  ],
   "dependencies": {
     "argparse": "2.0.1",
     "node-tcp-proxy": "0.0.28",
