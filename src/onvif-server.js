@@ -379,6 +379,9 @@ module.exports = class OnvifServer {
 
         this.server = http.createServer((request, response) => {
             const pathname = url.parse(request.url).pathname;
+            const clientIp = request.socket.remoteAddress;
+
+            self.logger.debug(`HTTP ${request.method} ${pathname} from ${clientIp}`);
 
             if (pathname === '/snapshot.png') {
                 // Serve static placeholder image
@@ -394,9 +397,12 @@ module.exports = class OnvifServer {
             } else if (pathname === '/snapshot') {
                 // Proxy snapshot from target server via HTTP
                 // This is more reliable than TCP proxy for large binary data
+                self.logger.info(`Snapshot request from ${clientIp}`);
+
                 const snapshotPath = self.config.highQuality?.snapshot;
                 if (!snapshotPath || !self.config.target?.hostname || !self.config.target?.ports?.snapshot) {
                     // Fallback to static placeholder
+                    self.logger.warn('Snapshot config missing, serving placeholder');
                     try {
                         const imagePath = path.join(process.cwd(), 'resources', 'snapshot.png');
                         const image = fs.readFileSync(imagePath);
@@ -410,12 +416,14 @@ module.exports = class OnvifServer {
                 }
 
                 const targetUrl = `http://${self.config.target.hostname}:${self.config.target.ports.snapshot}${snapshotPath}`;
+                self.logger.debug(`Proxying snapshot from ${targetUrl}`);
 
                 http.get(targetUrl, (proxyRes) => {
                     const chunks = [];
                     proxyRes.on('data', chunk => chunks.push(chunk));
                     proxyRes.on('end', () => {
                         const buffer = Buffer.concat(chunks);
+                        self.logger.debug(`Snapshot proxied: ${buffer.length} bytes, status ${proxyRes.statusCode}`);
                         response.writeHead(proxyRes.statusCode, {
                             'Content-Type': proxyRes.headers['content-type'] || 'image/jpeg',
                             'Content-Length': buffer.length,
@@ -424,10 +432,12 @@ module.exports = class OnvifServer {
                         response.end(buffer);
                     });
                     proxyRes.on('error', (err) => {
+                        self.logger.error(`Snapshot proxy error: ${err.message}`);
                         response.writeHead(502, { 'Content-Type': 'text/plain' });
                         response.end('Snapshot proxy error');
                     });
                 }).on('error', (err) => {
+                    self.logger.error(`Snapshot request error: ${err.message}`);
                     response.writeHead(502, { 'Content-Type': 'text/plain' });
                     response.end('Snapshot request error');
                 });
@@ -446,13 +456,22 @@ module.exports = class OnvifServer {
                     let body = '';
                     request.on('data', chunk => body += chunk.toString());
                     request.on('end', () => {
+                        // Extract SOAP action name
+                        const actionMatch = body.match(/<(?:\w+:)?(Get\w+|Set\w+|Create\w+|Delete\w+)/i);
+                        const action = actionMatch ? actionMatch[1] : 'unknown';
+
+                        self.logger.info(`SOAP device_service: ${action} from ${clientIp}`);
+                        self.logger.debug(`SOAP Request:\n${body}`);
+
                         const soapResponse = self.handleDeviceService(body);
                         if (soapResponse) {
+                            self.logger.debug(`SOAP Response:\n${soapResponse}`);
                             response.writeHead(200, {
                                 'Content-Type': 'application/soap+xml; charset=utf-8'
                             });
                             response.end(soapResponse);
                         } else {
+                            self.logger.warn(`Unknown SOAP action in device_service: ${action}`);
                             response.writeHead(500, { 'Content-Type': 'text/plain' });
                             response.end('Unknown SOAP action');
                         }
@@ -473,13 +492,22 @@ module.exports = class OnvifServer {
                     let body = '';
                     request.on('data', chunk => body += chunk.toString());
                     request.on('end', () => {
+                        // Extract SOAP action name
+                        const actionMatch = body.match(/<(?:\w+:)?(Get\w+|Set\w+|Create\w+|Delete\w+)/i);
+                        const action = actionMatch ? actionMatch[1] : 'unknown';
+
+                        self.logger.info(`SOAP media_service: ${action} from ${clientIp}`);
+                        self.logger.debug(`SOAP Request:\n${body}`);
+
                         const soapResponse = self.handleMediaService(body);
                         if (soapResponse) {
+                            self.logger.debug(`SOAP Response:\n${soapResponse}`);
                             response.writeHead(200, {
                                 'Content-Type': 'application/soap+xml; charset=utf-8'
                             });
                             response.end(soapResponse);
                         } else {
+                            self.logger.warn(`Unknown SOAP action in media_service: ${action}`);
                             response.writeHead(500, { 'Content-Type': 'text/plain' });
                             response.end('Unknown SOAP action');
                         }

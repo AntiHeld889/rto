@@ -74,7 +74,7 @@ onvif:
         snapshot: 80                               # Cameras non https port for snapshots
     highQuality:
       rtsp: /Streaming/Channels/101/                    # The RTSP Path
-      snapshot: /ISAPI/Streaming/Channels/101/picture   # Snapshot path - not working yet
+      snapshot: /ISAPI/Streaming/Channels/101/picture   # Snapshot HTTP path
       width: 2048                                       # The Video Width
       height: 1536                                      # The Video Height
       framerate: 15                                     # The Video Framerate/FPS
@@ -109,7 +109,7 @@ Known Limitations
 - Seems to only support recording normal/high profile h264 video streams at the moment
 - Your luck with h265 may vary
 - Scrubbing does not seem to work? Possibly depends on the h264 implementaion on the camera
-- Snapshot not implemented yet. Hope it works.
+- Snapshots are supported via HTTP proxy to the target camera
 - HighProfile support only for now - You can supply LowProfile but that shows up as an extra camera.
 
 
@@ -120,7 +120,7 @@ Known Limitations
   - Register with DCHP - DONE
   - More debug messages - DONE
 - Learn about the ONVIF Profile S
-  - Implement snapshot functionality?
+  - Snapshot functionality - DONE (via HTTP proxy)
   - Implement some other features?
 
 
@@ -224,7 +224,7 @@ You can either randomly change a few numbers of the UUID, or use a UUIDv4 genera
 If you have a separate low-quality RTSP stream available, fill in the information for the `lowQuality` section above but this shows up as a seperate camera in unify. 
 
 > [!NOTE]
-> Since we don't provide a snapshot url you will onyl see the Onvif logo in certain places in Unifi Protect where it does not show the livestream.
+> Snapshots are now supported. Configure `target.ports.snapshot` and `highQuality.snapshot` to enable thumbnails in Unifi Protect.
 
 [^1]: [What is MacVLAN?](https://ipwithease.com/what-is-macvlan)
 [^2]: [Wikipedia: Locally Administered MAC Address](https://en.wikipedia.org/wiki/MAC_address#:~:text=Locally%20administered%20addresses%20are%20distinguished,how%20the%20address%20is%20administered.)

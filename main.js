@@ -1,10 +1,22 @@
 const tcpProxy = require('node-tcp-proxy');
 const argparse = require('argparse');
-const logger = require('simple-node-logger').createSimpleLogger();
+const winston = require('winston');
 
 const OnvifServer = require('./src/onvif-server');
 const { readAndCheckConfig } = require('./src/config-tools');
 
+const logger = winston.createLogger({
+    level: process.env.DEBUG ? 'debug' : 'info',
+    format: winston.format.combine(
+        winston.format.timestamp({ format: 'HH:mm:ss.SSS' }),
+        winston.format.printf(({ timestamp, level, message }) => {
+            return `${timestamp} ${level.toUpperCase().padEnd(5)} ${message}`;
+        })
+    ),
+    transports: [
+        new winston.transports.Console()
+    ]
+});
 
 const parser = new argparse.ArgumentParser({
     description: 'Virtual RTSP to ONVIF proxy'
@@ -15,9 +27,6 @@ parser.add_argument('config', { help: 'config filename to use', nargs: '?' });
 let args = parser.parse_args();
 
 if (args) {
-    if (process.env.DEBUG) {
-        logger.setLevel('trace');
-    }
 
     if (!args.config) {
         logger.info('Please specifiy a config filename!');
@@ -44,8 +53,8 @@ if (args) {
 
             if (onvifConfig.ports.rtsp && onvifConfig.target.ports.rtsp)
                 proxies[onvifConfig.target.hostname][onvifConfig.ports.rtsp] = onvifConfig.target.ports.rtsp;
-            if (onvifConfig.ports.snapshot && onvifConfig.target.ports.snapshot)
-                proxies[onvifConfig.target.hostname][onvifConfig.ports.snapshot] = onvifConfig.target.ports.snapshot;
+            // Note: snapshot is now handled via HTTP proxy endpoint /snapshot on the server port,
+            // so we no longer need a TCP proxy for snapshot
         } else {
             logger.error(`Failed to find IP address for MAC address ${onvifConfig.mac}`)
             return -1;
