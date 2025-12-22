@@ -8,7 +8,7 @@ onvif:
         snapshot: 80                               # Cameras non https port for snapshots
     highQuality:
       rtsp: /Streaming/Channels/101/                    # The RTSP Path
-      snapshot: /ISAPI/Streaming/Channels/101/picture   # Snapshot path - not working yet
+      snapshot: /ISAPI/Streaming/Channels/101/picture   # Snapshot HTTP path
       width: 2048                                       # The Video Width
       height: 1536                                      # The Video Height
       framerate: 15                                     # The Video Framerate/FPS
@@ -17,7 +17,6 @@ onvif:
     ports:                                              # Virtual server ports. No need to change these unles you run into port already in use problems
       server: 8081
       rtsp: 8554
-      snapshot: 8080
     # mac - automatically added here and IP comes from DHCP- Add your own if you know what you doing
     # uuid - ONVIF ID - automatically added here. If you change it Protect will think its a different camera
   # - name: Dome 
@@ -38,4 +37,3 @@ onvif:
   #   ports:
   #     server: 9081
   #     rtsp: 9554
-  #     snapshot: 9082 
