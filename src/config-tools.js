@@ -70,6 +70,7 @@ function readAndCheckConfig(logger, configFile) {
                 logger.debug(error.message);
             }
 
+            // Use DHCP to obtain IP address (also brings interface up)
             logger.info(`NET_CONF: DHCP - ${vlanName}`);
             try {
                 const stdout = execSync(`dhclient ${vlanName}`);
@@ -77,20 +78,6 @@ function readAndCheckConfig(logger, configFile) {
             } catch (error) {
                 logger.debug(error.message);
             }
-
-            // logger.info(`NET_CONF: Set ${vlanName} IPv4 ${this.config.ipv4}`)
-            // try {
-            //     execSync(`ip addr add ${this.config.ipv4} dev ${vlanName}`)
-            // } catch (error) {
-            //     logger.debug(error.message)
-            // }
-
-            // logger.info(`NET_CONF: Set ${vlanName} UP`)
-            // try {
-            //     execSync(`ip link set ${vlanName} up`)
-            // } catch (error) {
-            //     logger.debug(error.message)
-            // }
         }
         proxyCounter++
     }
