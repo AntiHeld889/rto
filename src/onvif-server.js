@@ -1,29 +1,28 @@
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const dgram = require('dgram');
 const xml2js = require('xml2js');
 const { v1: uuidv1 } = require('uuid');
 const url = require('url');
 
-// Inline WSDL templates
-const DEVICE_SERVICE_WSDL = `<?xml version="1.0" encoding="utf-8" ?>
-<wsdl:definitions xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:i0="http://www.onvif.org/ver10/device/wsdl" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="http://tempuri.org/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tm="http://microsoft.com/wsdl/mime/textMatching/" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" targetNamespace="http://tempuri.org/">
-  <wsdl:import namespace="http://www.onvif.org/ver10/device/wsdl" location="https://www.onvif.org/ver10/device/wsdl/devicemgmt.wsdl"/>
-  <wsdl:service name="DeviceService">
-    <wsdl:port name="Device" binding="i0:DeviceBinding">
-      <soap:address location="http://localhost:8000/onvif/device_service"/>
-    </wsdl:port>
-  </wsdl:service>
-</wsdl:definitions>`;
+// Inline WSDL templates with runtime XAddr values.
+const ONVIF_DEVICE_NAMESPACE = 'http://www.onvif.org/ver10/device/wsdl';
+const ONVIF_MEDIA_NAMESPACE = 'http://www.onvif.org/ver10/media/wsdl';
+const ONVIF_SCHEMA_NAMESPACE = 'http://www.onvif.org/ver10/schema';
+const ONVIF_SUPPORTED_VERSION = { Major: 2, Minor: 6 };
 
-const MEDIA_SERVICE_WSDL = `<?xml version="1.0" encoding="utf-8" ?>
-<wsdl:definitions xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:i0="http://www.onvif.org/ver10/device/wsdl" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="http://tempuri.org/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tm="http://microsoft.com/wsdl/mime/textMatching/" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" targetNamespace="http://tempuri.org/">
-  <wsdl:import namespace="http://www.onvif.org/ver10/media/wsdl" location="https://www.onvif.org/ver10/media/wsdl/media.wsdl"/>
-  <wsdl:service name="MediaService">
-    <wsdl:port name="Media" binding="i0:MediaBinding">
-      <soap:address location="http://localhost:8000/onvif/media_service" />
+function createServiceWsdl(serviceName, portName, namespace, bindingName, address, importFile) {
+    return `<?xml version="1.0" encoding="utf-8" ?>
+<wsdl:definitions xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:i0="${namespace}" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="http://tempuri.org/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tm="http://microsoft.com/wsdl/mime/textMatching/" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" targetNamespace="http://tempuri.org/">
+  <wsdl:import namespace="${namespace}" location="https://www.onvif.org/ver10/${importFile}/wsdl/${importFile === 'device' ? 'devicemgmt' : importFile}.wsdl"/>
+  <wsdl:service name="${serviceName}">
+    <wsdl:port name="${portName}" binding="i0:${bindingName}">
+      <soap:address location="${address}"/>
     </wsdl:port>
   </wsdl:service>
 </wsdl:definitions>`;
+}
 
 const { getIp4FromMac } = require('./net-tools')
 
@@ -123,17 +122,70 @@ module.exports = class OnvifServer {
         }
     }
 
+    getDeviceServiceXAddr() {
+        return `http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service`;
+    }
+
+    getMediaServiceXAddr() {
+        return `http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service`;
+    }
+
+    createDeviceWsdl() {
+        return createServiceWsdl('DeviceService', 'Device', ONVIF_DEVICE_NAMESPACE, 'DeviceBinding', this.getDeviceServiceXAddr(), 'device');
+    }
+
+    createMediaWsdl() {
+        return createServiceWsdl('MediaService', 'Media', ONVIF_MEDIA_NAMESPACE, 'MediaBinding', this.getMediaServiceXAddr(), 'media');
+    }
+
     createSoapEnvelope(body) {
         return `<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope
     xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
-    xmlns:tds="http://www.onvif.org/ver10/device/wsdl"
-    xmlns:trt="http://www.onvif.org/ver10/media/wsdl"
-    xmlns:tt="http://www.onvif.org/ver10/schema">
+    xmlns:tds="${ONVIF_DEVICE_NAMESPACE}"
+    xmlns:trt="${ONVIF_MEDIA_NAMESPACE}"
+    xmlns:tt="${ONVIF_SCHEMA_NAMESPACE}">
     <SOAP-ENV:Body>
         ${body}
     </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>`;
+    }
+
+    createOnvifVersionXml(indent = '') {
+        return `${indent}<tt:Major>${ONVIF_SUPPORTED_VERSION.Major}</tt:Major>
+${indent}<tt:Minor>${ONVIF_SUPPORTED_VERSION.Minor}</tt:Minor>`;
+    }
+
+    createVideoSourceConfigurationXml(profile, elementName = 'tt:VideoSourceConfiguration', indent = '') {
+        return `${indent}<${elementName} token="${profile.VideoSourceConfiguration.token}">
+${indent}    <tt:Name>${profile.VideoSourceConfiguration.Name}</tt:Name>
+${indent}    <tt:UseCount>${profile.VideoSourceConfiguration.UseCount}</tt:UseCount>
+${indent}    <tt:SourceToken>${profile.VideoSourceConfiguration.SourceToken}</tt:SourceToken>
+${indent}    <tt:Bounds x="${profile.VideoSourceConfiguration.Bounds.x}" y="${profile.VideoSourceConfiguration.Bounds.y}" width="${profile.VideoSourceConfiguration.Bounds.width}" height="${profile.VideoSourceConfiguration.Bounds.height}"/>
+${indent}</${elementName}>`;
+    }
+
+    createVideoEncoderConfigurationXml(profile, elementName = 'tt:VideoEncoderConfiguration', indent = '') {
+        return `${indent}<${elementName} token="${profile.VideoEncoderConfiguration.token}">
+${indent}    <tt:Name>${profile.VideoEncoderConfiguration.Name}</tt:Name>
+${indent}    <tt:UseCount>${profile.VideoEncoderConfiguration.UseCount}</tt:UseCount>
+${indent}    <tt:Encoding>${profile.VideoEncoderConfiguration.Encoding}</tt:Encoding>
+${indent}    <tt:Resolution>
+${indent}        <tt:Width>${profile.VideoEncoderConfiguration.Resolution.Width}</tt:Width>
+${indent}        <tt:Height>${profile.VideoEncoderConfiguration.Resolution.Height}</tt:Height>
+${indent}    </tt:Resolution>
+${indent}    <tt:Quality>${profile.VideoEncoderConfiguration.Quality}</tt:Quality>
+${indent}    <tt:RateControl>
+${indent}        <tt:FrameRateLimit>${profile.VideoEncoderConfiguration.RateControl.FrameRateLimit}</tt:FrameRateLimit>
+${indent}        <tt:EncodingInterval>${profile.VideoEncoderConfiguration.RateControl.EncodingInterval}</tt:EncodingInterval>
+${indent}        <tt:BitrateLimit>${profile.VideoEncoderConfiguration.RateControl.BitrateLimit}</tt:BitrateLimit>
+${indent}    </tt:RateControl>
+${indent}    <tt:H264>
+${indent}        <tt:GovLength>${profile.VideoEncoderConfiguration.H264.GovLength}</tt:GovLength>
+${indent}        <tt:H264Profile>${profile.VideoEncoderConfiguration.H264.H264Profile}</tt:H264Profile>
+${indent}    </tt:H264>
+${indent}    <tt:SessionTimeout>${profile.VideoEncoderConfiguration.SessionTimeout}</tt:SessionTimeout>
+${indent}</${elementName}>`;
     }
 
     handleDeviceService(soapBody) {
@@ -190,12 +242,54 @@ module.exports = class OnvifServer {
                     <tds:HardwareId>${this.config.name.replace(' ', '_')}-1001</tds:HardwareId>
                 </tds:GetDeviceInformationResponse>
             `);
+        } else if (soapBody.includes('GetWsdlUrl')) {
+            return this.createSoapEnvelope(`
+                <tds:GetWsdlUrlResponse>
+                    <tds:WsdlUrl>https://www.onvif.org/ver10/device/wsdl/devicemgmt.wsdl</tds:WsdlUrl>
+                </tds:GetWsdlUrlResponse>
+            `);
+        } else if (soapBody.includes('GetServiceCapabilities')) {
+            return this.createSoapEnvelope(`
+                <tds:GetServiceCapabilitiesResponse>
+                    <tds:Capabilities>
+                        <tds:Network IPFilter="false" ZeroConfiguration="false" IPVersion6="false" DynDNS="false" Dot11Configuration="false" HostnameFromDHCP="false" NTP="0" DHCPv6="false"/>
+                        <tds:Security TLS1.1="false" TLS1.2="false" OnboardKeyGeneration="false" AccessPolicyConfig="false" DefaultAccessPolicy="false" Dot1X="false" RemoteUserHandling="false" X.509Token="false" SAMLToken="false" KerberosToken="false" UsernameToken="false" HttpDigest="false" RELToken="false"/>
+                        <tds:System DiscoveryResolve="false" DiscoveryBye="false" RemoteDiscovery="false" SystemBackup="false" SystemLogging="false" FirmwareUpgrade="false" HttpFirmwareUpgrade="false" HttpSystemBackup="false" HttpSystemLogging="false" HttpSupportInformation="false"/>
+                    </tds:Capabilities>
+                </tds:GetServiceCapabilitiesResponse>
+            `);
+        } else if (soapBody.includes('GetScopes')) {
+            return this.createSoapEnvelope(`
+                <tds:GetScopesResponse>
+                    <tds:Scopes>
+                        <tt:ScopeDef>Fixed</tt:ScopeDef>
+                        <tt:ScopeItem>onvif://www.onvif.org/type/video_encoder</tt:ScopeItem>
+                    </tds:Scopes>
+                    <tds:Scopes>
+                        <tt:ScopeDef>Configurable</tt:ScopeDef>
+                        <tt:ScopeItem>onvif://www.onvif.org/name/${this.config.name}</tt:ScopeItem>
+                    </tds:Scopes>
+                    <tds:Scopes>
+                        <tt:ScopeDef>Fixed</tt:ScopeDef>
+                        <tt:ScopeItem>onvif://www.onvif.org/hardware/rtsp-to-onvif</tt:ScopeItem>
+                    </tds:Scopes>
+                </tds:GetScopesResponse>
+            `);
+        } else if (soapBody.includes('GetHostname')) {
+            return this.createSoapEnvelope(`
+                <tds:GetHostnameResponse>
+                    <tds:HostnameInformation>
+                        <tt:FromDHCP>false</tt:FromDHCP>
+                        <tt:Name>${this.config.name}</tt:Name>
+                    </tds:HostnameInformation>
+                </tds:GetHostnameResponse>
+            `);
         } else if (soapBody.includes('GetCapabilities')) {
             return this.createSoapEnvelope(`
                 <tds:GetCapabilitiesResponse>
                     <tds:Capabilities>
                         <tt:Device>
-                            <tt:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service</tt:XAddr>
+                            <tt:XAddr>${this.getDeviceServiceXAddr()}</tt:XAddr>
                             <tt:System>
                                 <tt:DiscoveryResolve>false</tt:DiscoveryResolve>
                                 <tt:DiscoveryBye>false</tt:DiscoveryBye>
@@ -204,13 +298,12 @@ module.exports = class OnvifServer {
                                 <tt:SystemLogging>false</tt:SystemLogging>
                                 <tt:FirmwareUpgrade>false</tt:FirmwareUpgrade>
                                 <tt:SupportedVersions>
-                                    <tt:Major>2</tt:Major>
-                                    <tt:Minor>5</tt:Minor>
+                                    ${this.createOnvifVersionXml('                                    ')}
                                 </tt:SupportedVersions>
                             </tt:System>
                         </tt:Device>
                         <tt:Media>
-                            <tt:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service</tt:XAddr>
+                            <tt:XAddr>${this.getMediaServiceXAddr()}</tt:XAddr>
                             <tt:StreamingCapabilities>
                                 <tt:RTPMulticast>false</tt:RTPMulticast>
                                 <tt:RTP_TCP>true</tt:RTP_TCP>
@@ -229,7 +322,7 @@ module.exports = class OnvifServer {
             const mediaCapabilities = includeCapability ? `
                         <tds:Capabilities>
                             <trt:Capabilities SnapshotUri="true" Rotation="false" VideoSourceMode="false" xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
-                                <trt:ProfileCapabilities MaximumNumberOfProfiles="2"/>
+                                <trt:ProfileCapabilities MaximumNumberOfProfiles="${this.profiles.length}"/>
                                 <trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="true" RTP_RTSP_TCP="true"/>
                             </trt:Capabilities>
                         </tds:Capabilities>` : '';
@@ -238,18 +331,16 @@ module.exports = class OnvifServer {
                 <tds:GetServicesResponse>
                     <tds:Service>
                         <tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>
-                        <tds:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service</tds:XAddr>
+                        <tds:XAddr>${this.getDeviceServiceXAddr()}</tds:XAddr>
                         <tds:Version>
-                            <tt:Major>2</tt:Major>
-                            <tt:Minor>5</tt:Minor>
+                            ${this.createOnvifVersionXml('                            ')}
                         </tds:Version>
                     </tds:Service>
                     <tds:Service>
                         <tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace>
-                        <tds:XAddr>http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service</tds:XAddr>
+                        <tds:XAddr>${this.getMediaServiceXAddr()}</tds:XAddr>
                         <tds:Version>
-                            <tt:Major>2</tt:Major>
-                            <tt:Minor>5</tt:Minor>
+                            ${this.createOnvifVersionXml('                            ')}
                         </tds:Version>${mediaCapabilities}
                     </tds:Service>
                 </tds:GetServicesResponse>
@@ -260,7 +351,16 @@ module.exports = class OnvifServer {
     }
 
     handleMediaService(soapBody) {
-        if (soapBody.includes('GetProfile') && !soapBody.includes('GetProfiles')) {
+        if (soapBody.includes('GetServiceCapabilities')) {
+            return this.createSoapEnvelope(`
+                <trt:GetServiceCapabilitiesResponse>
+                    <trt:Capabilities SnapshotUri="true" Rotation="false" VideoSourceMode="false">
+                        <trt:ProfileCapabilities MaximumNumberOfProfiles="${this.profiles.length}"/>
+                        <trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="true" RTP_RTSP_TCP="true" NonAggregateControl="false"/>
+                    </trt:Capabilities>
+                </trt:GetServiceCapabilitiesResponse>
+            `);
+        } else if (soapBody.includes('GetProfile') && !soapBody.includes('GetProfiles')) {
             // GetProfile (single) - return specific profile by token
             let profileToken = 'main_stream';
             if (soapBody.includes('sub_stream')) {
@@ -350,6 +450,77 @@ module.exports = class OnvifServer {
                         </tt:Resolution>
                     </trt:VideoSources>
                 </trt:GetVideoSourcesResponse>
+            `);
+        } else if (soapBody.includes('GetVideoSourceConfigurations')) {
+            const configsXml = this.profiles.map(profile => this.createVideoSourceConfigurationXml(profile, 'trt:Configurations', '                    ')).join('\n');
+
+            return this.createSoapEnvelope(`
+                <trt:GetVideoSourceConfigurationsResponse>
+${configsXml}
+                </trt:GetVideoSourceConfigurationsResponse>
+            `);
+        } else if (soapBody.includes('GetVideoEncoderConfigurations')) {
+            const configsXml = this.profiles.map(profile => this.createVideoEncoderConfigurationXml(profile, 'trt:Configurations', '                    ')).join('\n');
+
+            return this.createSoapEnvelope(`
+                <trt:GetVideoEncoderConfigurationsResponse>
+${configsXml}
+                </trt:GetVideoEncoderConfigurationsResponse>
+            `);
+        } else if (soapBody.includes('GetVideoEncoderConfigurationOptions')) {
+            const maxWidth = Math.max(...this.profiles.map(profile => profile.VideoEncoderConfiguration.Resolution.Width));
+            const maxHeight = Math.max(...this.profiles.map(profile => profile.VideoEncoderConfiguration.Resolution.Height));
+            const maxFrameRate = Math.max(...this.profiles.map(profile => profile.VideoEncoderConfiguration.RateControl.FrameRateLimit));
+            const maxBitrate = Math.max(...this.profiles.map(profile => profile.VideoEncoderConfiguration.RateControl.BitrateLimit));
+
+            return this.createSoapEnvelope(`
+                <trt:GetVideoEncoderConfigurationOptionsResponse>
+                    <trt:Options>
+                        <tt:QualityRange>
+                            <tt:Min>1</tt:Min>
+                            <tt:Max>10</tt:Max>
+                        </tt:QualityRange>
+                        <tt:H264>
+                            <tt:ResolutionsAvailable>
+                                <tt:Width>${maxWidth}</tt:Width>
+                                <tt:Height>${maxHeight}</tt:Height>
+                            </tt:ResolutionsAvailable>
+                            <tt:GovLengthRange>
+                                <tt:Min>1</tt:Min>
+                                <tt:Max>${maxFrameRate}</tt:Max>
+                            </tt:GovLengthRange>
+                            <tt:FrameRateRange>
+                                <tt:Min>1</tt:Min>
+                                <tt:Max>${maxFrameRate}</tt:Max>
+                            </tt:FrameRateRange>
+                            <tt:EncodingIntervalRange>
+                                <tt:Min>1</tt:Min>
+                                <tt:Max>1</tt:Max>
+                            </tt:EncodingIntervalRange>
+                            <tt:H264ProfilesSupported>Main</tt:H264ProfilesSupported>
+                        </tt:H264>
+                        <tt:Extension>
+                            <tt:H264>
+                                <tt:BitrateRange>
+                                    <tt:Min>1</tt:Min>
+                                    <tt:Max>${maxBitrate}</tt:Max>
+                                </tt:BitrateRange>
+                            </tt:H264>
+                        </tt:Extension>
+                    </trt:Options>
+                </trt:GetVideoEncoderConfigurationOptionsResponse>
+            `);
+        } else if (soapBody.includes('GetVideoEncoderConfiguration')) {
+            let profile = this.profiles[0];
+            const requestedProfile = this.profiles.find(candidate => soapBody.includes(candidate.VideoEncoderConfiguration.token));
+            if (requestedProfile) {
+                profile = requestedProfile;
+            }
+
+            return this.createSoapEnvelope(`
+                <trt:GetVideoEncoderConfigurationResponse>
+${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '                    ')}
+                </trt:GetVideoEncoderConfigurationResponse>
             `);
         } else if (soapBody.includes('GetStreamUri')) {
             let profileToken = 'main_stream';
@@ -463,7 +634,7 @@ module.exports = class OnvifServer {
             } else if (pathname === '/onvif/device_service') {
                 if (request.method === 'GET') {
                     response.writeHead(200, { 'Content-Type': 'text/xml' });
-                    response.end(DEVICE_SERVICE_WSDL);
+                    response.end(self.createDeviceWsdl());
                 } else if (request.method === 'POST') {
                     let body = '';
                     request.on('data', chunk => body += chunk.toString());
@@ -492,7 +663,7 @@ module.exports = class OnvifServer {
             } else if (pathname === '/onvif/media_service') {
                 if (request.method === 'GET') {
                     response.writeHead(200, { 'Content-Type': 'text/xml' });
-                    response.end(MEDIA_SERVICE_WSDL);
+                    response.end(self.createMediaWsdl());
                 } else if (request.method === 'POST') {
                     let body = '';
                     request.on('data', chunk => body += chunk.toString());
@@ -576,7 +747,7 @@ module.exports = class OnvifServer {
                                             onvif://www.onvif.org/name/${this.config.name}
                                             onvif://www.onvif.org/location/
                                         </d:Scopes>
-                                        <d:XAddrs>http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service</d:XAddrs>
+                                        <d:XAddrs>${this.getDeviceServiceXAddr()}</d:XAddrs>
                                         <d:MetadataVersion>1</d:MetadataVersion>
                                     </d:ProbeMatch>
                                 </d:ProbeMatches>
