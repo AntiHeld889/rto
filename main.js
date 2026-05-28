@@ -24,16 +24,17 @@ const parser = new argparse.ArgumentParser({
 
 parser.add_argument('config', { help: 'config filename to use', nargs: '?' });
 
-let args = parser.parse_args();
+const args = parser.parse_args();
 
 if (args) {
 
     if (!args.config) {
-        logger.info('Please specifiy a config filename!');
-        return -1;
+        logger.error('Please specify a config filename!');
+        process.exitCode = 1;
+        return;
     }
 
-    let config = readAndCheckConfig(logger, args.config)
+    const config = readAndCheckConfig(logger, args.config);
 
     let proxies = {};
     for (let onvifConfig of config.onvif) {
@@ -57,7 +58,8 @@ if (args) {
             // so we no longer need a TCP proxy for snapshot
         } else {
             logger.error(`Failed to find IP address for MAC address ${onvifConfig.mac}`)
-            return -1;
+            process.exitCode = 1;
+            return;
         }
     }
 
@@ -68,5 +70,5 @@ if (args) {
         }
     }
 
-    return 0;
+    process.exitCode = 0;
 }

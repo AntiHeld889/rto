@@ -12,6 +12,16 @@ const ONVIF_MEDIA_NAMESPACE = 'http://www.onvif.org/ver10/media/wsdl';
 const ONVIF_SCHEMA_NAMESPACE = 'http://www.onvif.org/ver10/schema';
 const ONVIF_SUPPORTED_VERSION = { Major: 2, Minor: 6 };
 
+
+function escapeXml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
 function createServiceWsdl(serviceName, portName, namespace, bindingName, address, importFile) {
     return `<?xml version="1.0" encoding="utf-8" ?>
 <wsdl:definitions xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:i0="${namespace}" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="http://tempuri.org/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tm="http://microsoft.com/wsdl/mime/textMatching/" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" targetNamespace="http://tempuri.org/">
@@ -236,10 +246,10 @@ ${indent}</${elementName}>`;
             return this.createSoapEnvelope(`
                 <tds:GetDeviceInformationResponse>
                     <tds:Manufacturer>rtsp-2-onvif</tds:Manufacturer>
-                    <tds:Model>${this.config.name}</tds:Model>
+                    <tds:Model>${escapeXml(this.config.name)}</tds:Model>
                     <tds:FirmwareVersion>1.0.0</tds:FirmwareVersion>
-                    <tds:SerialNumber>${this.config.name.replace(' ', '_')}-0000</tds:SerialNumber>
-                    <tds:HardwareId>${this.config.name.replace(' ', '_')}-1001</tds:HardwareId>
+                    <tds:SerialNumber>${escapeXml(this.config.name.replace(/\s+/g, '_'))}-0000</tds:SerialNumber>
+                    <tds:HardwareId>${escapeXml(this.config.name.replace(/\s+/g, '_'))}-1001</tds:HardwareId>
                 </tds:GetDeviceInformationResponse>
             `);
         } else if (soapBody.includes('GetWsdlUrl')) {
@@ -267,7 +277,7 @@ ${indent}</${elementName}>`;
                     </tds:Scopes>
                     <tds:Scopes>
                         <tt:ScopeDef>Configurable</tt:ScopeDef>
-                        <tt:ScopeItem>onvif://www.onvif.org/name/${this.config.name}</tt:ScopeItem>
+                        <tt:ScopeItem>onvif://www.onvif.org/name/${escapeXml(encodeURIComponent(this.config.name))}</tt:ScopeItem>
                     </tds:Scopes>
                     <tds:Scopes>
                         <tt:ScopeDef>Fixed</tt:ScopeDef>
@@ -280,7 +290,7 @@ ${indent}</${elementName}>`;
                 <tds:GetHostnameResponse>
                     <tds:HostnameInformation>
                         <tt:FromDHCP>false</tt:FromDHCP>
-                        <tt:Name>${this.config.name}</tt:Name>
+                        <tt:Name>${escapeXml(this.config.name)}</tt:Name>
                     </tds:HostnameInformation>
                 </tds:GetHostnameResponse>
             `);
@@ -536,7 +546,7 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
             return this.createSoapEnvelope(`
                 <trt:GetStreamUriResponse>
                     <trt:MediaUri>
-                        <tt:Uri>rtsp://${this.config.hostname}:${this.config.ports.rtsp}${rtspPath}</tt:Uri>
+                        <tt:Uri>${escapeXml(`rtsp://${this.config.hostname}:${this.config.ports.rtsp}${rtspPath}`)}</tt:Uri>
                         <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
                         <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
                         <tt:Timeout>PT30S</tt:Timeout>
@@ -550,7 +560,7 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
             return this.createSoapEnvelope(`
                 <trt:GetSnapshotUriResponse>
                     <trt:MediaUri>
-                        <tt:Uri>${uri}</tt:Uri>
+                        <tt:Uri>${escapeXml(uri)}</tt:Uri>
                         <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
                         <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
                         <tt:Timeout>PT30S</tt:Timeout>
@@ -608,7 +618,7 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
                 const targetUrl = `http://${self.config.target.hostname}:${self.config.target.ports.snapshot}${snapshotPath}`;
                 self.logger.debug(`Proxying snapshot from ${targetUrl}`);
 
-                http.get(targetUrl, (proxyRes) => {
+                const proxyReq = http.get(targetUrl, (proxyRes) => {
                     const chunks = [];
                     proxyRes.on('data', chunk => chunks.push(chunk));
                     proxyRes.on('end', () => {
@@ -626,10 +636,19 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
                         response.writeHead(502, { 'Content-Type': 'text/plain' });
                         response.end('Snapshot proxy error');
                     });
-                }).on('error', (err) => {
-                    self.logger.error(`Snapshot request error: ${err.message}`);
-                    response.writeHead(502, { 'Content-Type': 'text/plain' });
-                    response.end('Snapshot request error');
+                });
+
+                proxyReq.setTimeout(10000, () => {
+                    self.logger.error(`Snapshot request timed out: ${targetUrl}`);
+                    proxyReq.destroy(new Error('Snapshot request timed out'));
+                });
+
+                proxyReq.on('error', (err) => {
+                    if (!response.headersSent) {
+                        self.logger.error(`Snapshot request error: ${err.message}`);
+                        response.writeHead(502, { 'Content-Type': 'text/plain' });
+                        response.end('Snapshot request error');
+                    }
                 });
             } else if (pathname === '/onvif/device_service') {
                 if (request.method === 'GET') {
@@ -711,6 +730,11 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
             this.logger.debug(`SERVER: ${this.config.name} - Discovery request from ${remote.address}:${remote.port}`);
 
             xml2js.parseString(message.toString(), { tagNameProcessors: [xml2js['processors'].stripPrefix] }, (err, result) => {
+                if (err || !result?.Envelope?.Header?.[0]?.MessageID?.[0]) {
+                    this.logger.debug(`SERVER: ${this.config.name} - Invalid discovery probe: ${err ? err.message : 'missing MessageID'}`);
+                    return;
+                }
+
                 let probeUuid = result['Envelope']['Header'][0]['MessageID'][0];
                 let probeType = '';
                 try {
@@ -728,7 +752,7 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
                         <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
                             <SOAP-ENV:Header>
                                 <wsa:MessageID>uuid:${uuidv1()}</wsa:MessageID>
-                                <wsa:RelatesTo>${probeUuid}</wsa:RelatesTo>
+                                <wsa:RelatesTo>${escapeXml(probeUuid)}</wsa:RelatesTo>
                                 <wsa:To SOAP-ENV:mustUnderstand="true">http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</wsa:To>
                                 <wsa:Action SOAP-ENV:mustUnderstand="true">http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</wsa:Action>
                                 <d:AppSequence SOAP-ENV:mustUnderstand="true" MessageNumber="${this.discoveryMessageNo}" InstanceId="1234567890"/>
@@ -737,17 +761,17 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
                                 <d:ProbeMatches>
                                     <d:ProbeMatch>
                                         <wsa:EndpointReference>
-                                            <wsa:Address>urn:uuid:${this.config.uuid}</wsa:Address>
+                                            <wsa:Address>urn:uuid:${escapeXml(this.config.uuid)}</wsa:Address>
                                         </wsa:EndpointReference>
                                         <d:Types>dn:NetworkVideoTransmitter</d:Types>
                                         <d:Scopes>
                                             onvif://www.onvif.org/type/video_encoder
                                             onvif://www.onvif.org/type/ptz
                                             onvif://www.onvif.org/hardware/onvif
-                                            onvif://www.onvif.org/name/${this.config.name}
+                                            onvif://www.onvif.org/name/${escapeXml(encodeURIComponent(this.config.name))}
                                             onvif://www.onvif.org/location/
                                         </d:Scopes>
-                                        <d:XAddrs>${this.getDeviceServiceXAddr()}</d:XAddrs>
+                                        <d:XAddrs>${escapeXml(this.getDeviceServiceXAddr())}</d:XAddrs>
                                         <d:MetadataVersion>1</d:MetadataVersion>
                                     </d:ProbeMatch>
                                 </d:ProbeMatches>
@@ -756,7 +780,10 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
 
                     this.discoveryMessageNo++;
                     let responseBuffer = Buffer.from(response);
-                    return dgram.createSocket('udp4').send(responseBuffer, 0, responseBuffer.length, remote.port, remote.address);
+                    const responseSocket = dgram.createSocket('udp4');
+                    return responseSocket.send(responseBuffer, 0, responseBuffer.length, remote.port, remote.address, () => {
+                        responseSocket.close();
+                    });
                 }
             });
         });
