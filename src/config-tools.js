@@ -1,9 +1,14 @@
 const YAML = require('yaml');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const { getIp4FromMac, generateUUIDv4, generateNetworkMac } = require('./net-tools')
 
+
+function fatalConfigError(logger, message) {
+    logger.error(message);
+    process.exit(1);
+}
 
 function readConfig(logger, configFile) {
 
@@ -12,8 +17,7 @@ function readConfig(logger, configFile) {
         configData = fs.readFileSync(configFile, 'utf8');
     } catch (error) {
         if (error.code === 'ENOENT') {
-            logger.info(`File not found: ${configFile}`);
-            exit(-1);
+            fatalConfigError(logger, `File not found: ${configFile}`);
         }
         throw error;
     }
@@ -22,16 +26,42 @@ function readConfig(logger, configFile) {
     try {
         config = YAML.parse(configData);
     } catch (error) {
-        logger.info('Failed to read config, invalid yaml syntax.')
-        exit(-1);
+        fatalConfigError(logger, `Failed to read config, invalid yaml syntax: ${error.message}`);
     }
 
     return config;
 }
 
-function sleep(seconds){
-    const spawnSync = require('child_process').spawnSync;
-    var sleep = spawnSync('sleep', [seconds]);
+function sleep(seconds) {
+    spawnSync('sleep', [String(seconds)]);
+}
+
+
+function requireConfigValue(logger, value, path) {
+    if (value === undefined || value === null || value === '') {
+        fatalConfigError(logger, `Invalid config: missing ${path}.`);
+    }
+}
+
+function validateOnvifConfig(logger, onvifConfig, index) {
+    const prefix = `onvif[${index}]`;
+
+    if (!onvifConfig || typeof onvifConfig !== 'object') {
+        fatalConfigError(logger, `Invalid config: ${prefix} must be an object.`);
+    }
+
+    requireConfigValue(logger, onvifConfig.name, `${prefix}.name`);
+    requireConfigValue(logger, onvifConfig.dev, `${prefix}.dev`);
+    requireConfigValue(logger, onvifConfig.target?.hostname, `${prefix}.target.hostname`);
+    requireConfigValue(logger, onvifConfig.target?.ports?.rtsp, `${prefix}.target.ports.rtsp`);
+    requireConfigValue(logger, onvifConfig.highQuality?.rtsp, `${prefix}.highQuality.rtsp`);
+    requireConfigValue(logger, onvifConfig.highQuality?.width, `${prefix}.highQuality.width`);
+    requireConfigValue(logger, onvifConfig.highQuality?.height, `${prefix}.highQuality.height`);
+    requireConfigValue(logger, onvifConfig.highQuality?.framerate, `${prefix}.highQuality.framerate`);
+    requireConfigValue(logger, onvifConfig.highQuality?.bitrate, `${prefix}.highQuality.bitrate`);
+    requireConfigValue(logger, onvifConfig.highQuality?.quality, `${prefix}.highQuality.quality`);
+    requireConfigValue(logger, onvifConfig.ports?.server, `${prefix}.ports.server`);
+    requireConfigValue(logger, onvifConfig.ports?.rtsp, `${prefix}.ports.rtsp`);
 }
 
 function readAndCheckConfig(logger, configFile) {
@@ -39,9 +69,14 @@ function readAndCheckConfig(logger, configFile) {
     
     let config = readConfig(logger, configFile);
 
+    if (!config || !Array.isArray(config.onvif)) {
+        fatalConfigError(logger, 'Invalid config: expected an onvif array.');
+    }
+
     let isSaveRequired = false;
     let proxyCounter = 0;
     for (let onvifConfig of config.onvif) {
+        validateOnvifConfig(logger, onvifConfig, proxyCounter);
 
         //Generate a V4 UUID
         if (!onvifConfig.uuid) {
@@ -64,7 +99,7 @@ function readAndCheckConfig(logger, configFile) {
 
             logger.info(`NET_CONF: ADD - ${vlanName} MAC: ${onvifConfig.mac}`);
             try {
-                const stdout = execSync(`ip link add ${vlanName} link ${onvifConfig.dev} address ${onvifConfig.mac} type macvlan mode bridge`);
+                const stdout = execFileSync('ip', ['link', 'add', vlanName, 'link', onvifConfig.dev, 'address', onvifConfig.mac, 'type', 'macvlan', 'mode', 'bridge']);
                 logger.debug(stdout);
             } catch (error) {
                 logger.debug(error.message);
@@ -73,7 +108,7 @@ function readAndCheckConfig(logger, configFile) {
             // Use DHCP to obtain IP address (also brings interface up)
             logger.info(`NET_CONF: DHCP - ${vlanName}`);
             try {
-                const stdout = execSync(`dhclient ${vlanName}`);
+                const stdout = execFileSync('dhclient', [vlanName]);
                 logger.debug(stdout);
             } catch (error) {
                 logger.debug(error.message);
