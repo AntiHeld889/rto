@@ -81,6 +81,12 @@ onvif:
       framerate: 15                                     # The Video Framerate/FPS
       bitrate: 3072                                     # The Video Bitrate in kb/s
       quality: 4                                        # Quality, leave this as 4 for the high quality stream.
+    audio:                                              # Optional ONVIF audio metadata; RTSP audio itself is passed through directly
+      enabled: true                                      # Set false if the RTSP stream has no audio track
+      encoding: AAC                                      # Match the RTSP audio codec: AAC, G711, or G726
+      bitrate: 128                                       # Audio bitrate in kb/s
+      sampleRate: 8000                                   # Audio sample rate in Hz
+      channels: 1                                        # Number of audio channels in the RTSP stream
     ports:                                              # Virtual server ports. No need to change these unles you run into port already in use problems
       server: 8081
       rtsp: 8554
@@ -218,6 +224,8 @@ Your RTSP url may contain a username and password - those should NOT be included
 Instead you will have to enter them in the software that you plan on consuming this Onvif camera in, for example during adoption in Unifi Protect.
 
 Next you need to figure out the resolution and framerate for the stream. If you don't know them, you can use VLC to open the RTSP stream and check the _Media Information_ (Window -> Media Information) for the _"Video Resolution"_ and _"Frame rate"_ on the _"Codec Details"_ page, and the _"Stream bitrate"_ on the _"Statistics"_ page. The bitrate will fluctuate quite a bit most likely, so just pick a number that is close to it (e.g. 1024, 2048, 4096 ..).
+
+Audio is advertised through ONVIF when `audio.enabled` is not set to `false`. The RTSP proxy does not transcode or generate a separate audio stream; clients receive the audio track directly from the original RTSP stream. Set `audio.encoding`, `audio.bitrate`, `audio.sampleRate`, and `audio.channels` to match the source stream so ONVIF clients see the correct metadata.
 
 You can either randomly change a few numbers of the UUID, or use a UUIDv4 generator[^3].
 

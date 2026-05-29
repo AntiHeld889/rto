@@ -62,6 +62,16 @@ function validateOnvifConfig(logger, onvifConfig, index) {
     requireConfigValue(logger, onvifConfig.highQuality?.quality, `${prefix}.highQuality.quality`);
     requireConfigValue(logger, onvifConfig.ports?.server, `${prefix}.ports.server`);
     requireConfigValue(logger, onvifConfig.ports?.rtsp, `${prefix}.ports.rtsp`);
+
+    if (onvifConfig.audio) {
+        if (onvifConfig.audio.enabled !== undefined && typeof onvifConfig.audio.enabled !== 'boolean') {
+            fatalConfigError(logger, `Invalid config: ${prefix}.audio.enabled must be true or false.`);
+        }
+
+        if (onvifConfig.audio.encoding !== undefined && !['AAC', 'G711', 'G726'].includes(onvifConfig.audio.encoding)) {
+            fatalConfigError(logger, `Invalid config: ${prefix}.audio.encoding must be AAC, G711, or G726.`);
+        }
+    }
 }
 
 function readAndCheckConfig(logger, configFile) {
