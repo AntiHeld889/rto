@@ -61,6 +61,18 @@ module.exports = class OnvifServer {
             Resolution: { Width: this.config.highQuality.width, Height: this.config.highQuality.height }
         };
 
+        this.audioConfig = {
+            enabled: this.config.audio?.enabled !== false,
+            encoding: this.config.audio?.encoding || 'AAC',
+            bitrate: this.config.audio?.bitrate || 128,
+            sampleRate: this.config.audio?.sampleRate || 8000
+        };
+
+        this.audioSource = {
+            token: 'audio_src_token',
+            Channels: this.config.audio?.channels || 1
+        };
+
         this.profiles = [
             {
                 Name: 'MainStream',
@@ -92,7 +104,9 @@ module.exports = class OnvifServer {
                         H264Profile: 'Main'
                     },
                     SessionTimeout: 'PT1000S'
-                }
+                },
+                AudioSourceConfiguration: this.createAudioSourceConfiguration('audio_src_hq_config_token', 1),
+                AudioEncoderConfiguration: this.createAudioEncoderConfiguration('audio_encoder_hq_config_token', 'CardinalHqAudioConfiguration', 1)
             }
         ];
 
@@ -127,9 +141,42 @@ module.exports = class OnvifServer {
                         H264Profile: 'Main'
                     },
                     SessionTimeout: 'PT1000S'
-                }
+                },
+                AudioSourceConfiguration: this.createAudioSourceConfiguration('audio_src_lq_config_token', 1),
+                AudioEncoderConfiguration: this.createAudioEncoderConfiguration('audio_encoder_lq_config_token', 'CardinalLqAudioConfiguration', 1)
             });
         }
+    }
+
+    createAudioSourceConfiguration(token, useCount) {
+        return {
+            token,
+            Name: 'AudioSource',
+            UseCount: useCount,
+            SourceToken: this.audioSource.token
+        };
+    }
+
+    createAudioEncoderConfiguration(token, name, useCount) {
+        return {
+            token,
+            Name: name,
+            UseCount: useCount,
+            Encoding: this.audioConfig.encoding,
+            Bitrate: this.audioConfig.bitrate,
+            SampleRate: this.audioConfig.sampleRate,
+            SessionTimeout: 'PT1000S'
+        };
+    }
+
+    getAudioConfigurationsXml(profile, indent = '') {
+        if (!this.audioConfig.enabled) {
+            return '';
+        }
+
+        return `
+${this.createAudioSourceConfigurationXml(profile, 'tt:AudioSourceConfiguration', indent)}
+${this.createAudioEncoderConfigurationXml(profile, 'tt:AudioEncoderConfiguration', indent)}`;
     }
 
     getDeviceServiceXAddr() {
@@ -195,6 +242,33 @@ ${indent}        <tt:GovLength>${profile.VideoEncoderConfiguration.H264.GovLengt
 ${indent}        <tt:H264Profile>${profile.VideoEncoderConfiguration.H264.H264Profile}</tt:H264Profile>
 ${indent}    </tt:H264>
 ${indent}    <tt:SessionTimeout>${profile.VideoEncoderConfiguration.SessionTimeout}</tt:SessionTimeout>
+${indent}</${elementName}>`;
+    }
+
+    createAudioSourceConfigurationXml(profile, elementName = 'tt:AudioSourceConfiguration', indent = '') {
+        return `${indent}<${elementName} token="${profile.AudioSourceConfiguration.token}">
+${indent}    <tt:Name>${profile.AudioSourceConfiguration.Name}</tt:Name>
+${indent}    <tt:UseCount>${profile.AudioSourceConfiguration.UseCount}</tt:UseCount>
+${indent}    <tt:SourceToken>${profile.AudioSourceConfiguration.SourceToken}</tt:SourceToken>
+${indent}</${elementName}>`;
+    }
+
+    createAudioEncoderConfigurationXml(profile, elementName = 'tt:AudioEncoderConfiguration', indent = '') {
+        return `${indent}<${elementName} token="${profile.AudioEncoderConfiguration.token}">
+${indent}    <tt:Name>${profile.AudioEncoderConfiguration.Name}</tt:Name>
+${indent}    <tt:UseCount>${profile.AudioEncoderConfiguration.UseCount}</tt:UseCount>
+${indent}    <tt:Encoding>${profile.AudioEncoderConfiguration.Encoding}</tt:Encoding>
+${indent}    <tt:Bitrate>${profile.AudioEncoderConfiguration.Bitrate}</tt:Bitrate>
+${indent}    <tt:SampleRate>${profile.AudioEncoderConfiguration.SampleRate}</tt:SampleRate>
+${indent}    <tt:SessionTimeout>${profile.AudioEncoderConfiguration.SessionTimeout}</tt:SessionTimeout>
+${indent}</${elementName}>`;
+    }
+
+    createProfileXml(profile, elementName = 'trt:Profile', indent = '') {
+        return `${indent}<${elementName} token="${profile.token}">
+${indent}    <tt:Name>${profile.Name}</tt:Name>
+${this.createVideoSourceConfigurationXml(profile, 'tt:VideoSourceConfiguration', `${indent}    `)}
+${this.createVideoEncoderConfigurationXml(profile, 'tt:VideoEncoderConfiguration', `${indent}    `)}${this.getAudioConfigurationsXml(profile, `${indent}    `)}
 ${indent}</${elementName}>`;
     }
 
@@ -380,73 +454,15 @@ ${indent}</${elementName}>`;
 
             return this.createSoapEnvelope(`
                 <trt:GetProfileResponse>
-                    <trt:Profile token="${profile.token}">
-                        <tt:Name>${profile.Name}</tt:Name>
-                        <tt:VideoSourceConfiguration token="${profile.VideoSourceConfiguration.token}">
-                            <tt:Name>${profile.VideoSourceConfiguration.Name}</tt:Name>
-                            <tt:UseCount>${profile.VideoSourceConfiguration.UseCount}</tt:UseCount>
-                            <tt:SourceToken>${profile.VideoSourceConfiguration.SourceToken}</tt:SourceToken>
-                            <tt:Bounds x="${profile.VideoSourceConfiguration.Bounds.x}" y="${profile.VideoSourceConfiguration.Bounds.y}"
-                                       width="${profile.VideoSourceConfiguration.Bounds.width}" height="${profile.VideoSourceConfiguration.Bounds.height}"/>
-                        </tt:VideoSourceConfiguration>
-                        <tt:VideoEncoderConfiguration token="${profile.VideoEncoderConfiguration.token}">
-                            <tt:Name>${profile.VideoEncoderConfiguration.Name}</tt:Name>
-                            <tt:UseCount>${profile.VideoEncoderConfiguration.UseCount}</tt:UseCount>
-                            <tt:Encoding>${profile.VideoEncoderConfiguration.Encoding}</tt:Encoding>
-                            <tt:Resolution>
-                                <tt:Width>${profile.VideoEncoderConfiguration.Resolution.Width}</tt:Width>
-                                <tt:Height>${profile.VideoEncoderConfiguration.Resolution.Height}</tt:Height>
-                            </tt:Resolution>
-                            <tt:Quality>${profile.VideoEncoderConfiguration.Quality}</tt:Quality>
-                            <tt:RateControl>
-                                <tt:FrameRateLimit>${profile.VideoEncoderConfiguration.RateControl.FrameRateLimit}</tt:FrameRateLimit>
-                                <tt:EncodingInterval>${profile.VideoEncoderConfiguration.RateControl.EncodingInterval}</tt:EncodingInterval>
-                                <tt:BitrateLimit>${profile.VideoEncoderConfiguration.RateControl.BitrateLimit}</tt:BitrateLimit>
-                            </tt:RateControl>
-                            <tt:H264>
-                                <tt:GovLength>${profile.VideoEncoderConfiguration.H264.GovLength}</tt:GovLength>
-                                <tt:H264Profile>${profile.VideoEncoderConfiguration.H264.H264Profile}</tt:H264Profile>
-                            </tt:H264>
-                        </tt:VideoEncoderConfiguration>
-                    </trt:Profile>
+${this.createProfileXml(profile, 'trt:Profile', '                    ')}
                 </trt:GetProfileResponse>
             `);
         } else if (soapBody.includes('GetProfiles')) {
-            let profilesXml = this.profiles.map(profile => `
-                <trt:Profiles token="${profile.token}">
-                    <tt:Name>${profile.Name}</tt:Name>
-                    <tt:VideoSourceConfiguration token="${profile.VideoSourceConfiguration.token}">
-                        <tt:Name>${profile.VideoSourceConfiguration.Name}</tt:Name>
-                        <tt:UseCount>${profile.VideoSourceConfiguration.UseCount}</tt:UseCount>
-                        <tt:SourceToken>${profile.VideoSourceConfiguration.SourceToken}</tt:SourceToken>
-                        <tt:Bounds x="${profile.VideoSourceConfiguration.Bounds.x}" y="${profile.VideoSourceConfiguration.Bounds.y}"
-                                   width="${profile.VideoSourceConfiguration.Bounds.width}" height="${profile.VideoSourceConfiguration.Bounds.height}"/>
-                    </tt:VideoSourceConfiguration>
-                    <tt:VideoEncoderConfiguration token="${profile.VideoEncoderConfiguration.token}">
-                        <tt:Name>${profile.VideoEncoderConfiguration.Name}</tt:Name>
-                        <tt:UseCount>${profile.VideoEncoderConfiguration.UseCount}</tt:UseCount>
-                        <tt:Encoding>${profile.VideoEncoderConfiguration.Encoding}</tt:Encoding>
-                        <tt:Resolution>
-                            <tt:Width>${profile.VideoEncoderConfiguration.Resolution.Width}</tt:Width>
-                            <tt:Height>${profile.VideoEncoderConfiguration.Resolution.Height}</tt:Height>
-                        </tt:Resolution>
-                        <tt:Quality>${profile.VideoEncoderConfiguration.Quality}</tt:Quality>
-                        <tt:RateControl>
-                            <tt:FrameRateLimit>${profile.VideoEncoderConfiguration.RateControl.FrameRateLimit}</tt:FrameRateLimit>
-                            <tt:EncodingInterval>${profile.VideoEncoderConfiguration.RateControl.EncodingInterval}</tt:EncodingInterval>
-                            <tt:BitrateLimit>${profile.VideoEncoderConfiguration.RateControl.BitrateLimit}</tt:BitrateLimit>
-                        </tt:RateControl>
-                        <tt:H264>
-                            <tt:GovLength>${profile.VideoEncoderConfiguration.H264.GovLength}</tt:GovLength>
-                            <tt:H264Profile>${profile.VideoEncoderConfiguration.H264.H264Profile}</tt:H264Profile>
-                        </tt:H264>
-                    </tt:VideoEncoderConfiguration>
-                </trt:Profiles>
-            `).join('');
+            const profilesXml = this.profiles.map(profile => this.createProfileXml(profile, 'trt:Profiles', '                    ')).join('\n');
 
             return this.createSoapEnvelope(`
                 <trt:GetProfilesResponse>
-                    ${profilesXml}
+${profilesXml}
                 </trt:GetProfilesResponse>
             `);
         } else if (soapBody.includes('GetVideoSources')) {
@@ -531,6 +547,76 @@ ${configsXml}
                 <trt:GetVideoEncoderConfigurationResponse>
 ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '                    ')}
                 </trt:GetVideoEncoderConfigurationResponse>
+            `);
+        } else if (soapBody.includes('GetAudioSources')) {
+            const sourcesXml = this.audioConfig.enabled ? `
+                    <trt:AudioSources token="${this.audioSource.token}">
+                        <tt:Channels>${this.audioSource.Channels}</tt:Channels>
+                    </trt:AudioSources>` : '';
+
+            return this.createSoapEnvelope(`
+                <trt:GetAudioSourcesResponse>${sourcesXml}
+                </trt:GetAudioSourcesResponse>
+            `);
+        } else if (soapBody.includes('GetAudioSourceConfigurations')) {
+            const configsXml = this.audioConfig.enabled
+                ? this.profiles.map(profile => this.createAudioSourceConfigurationXml(profile, 'trt:Configurations', '                    ')).join('\n')
+                : '';
+
+            return this.createSoapEnvelope(`
+                <trt:GetAudioSourceConfigurationsResponse>
+${configsXml}
+                </trt:GetAudioSourceConfigurationsResponse>
+            `);
+        } else if (soapBody.includes('GetAudioEncoderConfigurations')) {
+            const configsXml = this.audioConfig.enabled
+                ? this.profiles.map(profile => this.createAudioEncoderConfigurationXml(profile, 'trt:Configurations', '                    ')).join('\n')
+                : '';
+
+            return this.createSoapEnvelope(`
+                <trt:GetAudioEncoderConfigurationsResponse>
+${configsXml}
+                </trt:GetAudioEncoderConfigurationsResponse>
+            `);
+        } else if (soapBody.includes('GetAudioEncoderConfigurationOptions')) {
+            return this.createSoapEnvelope(`
+                <trt:GetAudioEncoderConfigurationOptionsResponse>
+                    <trt:Options>
+                        <tt:Options>
+                            <tt:Encoding>${this.audioConfig.encoding}</tt:Encoding>
+                            <tt:BitrateList>
+                                <tt:Items>${this.audioConfig.bitrate}</tt:Items>
+                            </tt:BitrateList>
+                            <tt:SampleRateList>
+                                <tt:Items>${this.audioConfig.sampleRate}</tt:Items>
+                            </tt:SampleRateList>
+                        </tt:Options>
+                    </trt:Options>
+                </trt:GetAudioEncoderConfigurationOptionsResponse>
+            `);
+        } else if (soapBody.includes('GetAudioEncoderConfiguration')) {
+            let profile = this.profiles[0];
+            const requestedProfile = this.profiles.find(candidate => soapBody.includes(candidate.AudioEncoderConfiguration.token));
+            if (requestedProfile) {
+                profile = requestedProfile;
+            }
+
+            return this.createSoapEnvelope(`
+                <trt:GetAudioEncoderConfigurationResponse>
+${this.createAudioEncoderConfigurationXml(profile, 'trt:Configuration', '                    ')}
+                </trt:GetAudioEncoderConfigurationResponse>
+            `);
+        } else if (soapBody.includes('GetAudioSourceConfiguration')) {
+            let profile = this.profiles[0];
+            const requestedProfile = this.profiles.find(candidate => soapBody.includes(candidate.AudioSourceConfiguration.token));
+            if (requestedProfile) {
+                profile = requestedProfile;
+            }
+
+            return this.createSoapEnvelope(`
+                <trt:GetAudioSourceConfigurationResponse>
+${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '                    ')}
+                </trt:GetAudioSourceConfigurationResponse>
             `);
         } else if (soapBody.includes('GetStreamUri')) {
             let profileToken = 'main_stream';
