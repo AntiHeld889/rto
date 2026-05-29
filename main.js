@@ -1,8 +1,8 @@
-const tcpProxy = require('node-tcp-proxy');
 const argparse = require('argparse');
 const winston = require('winston');
 
 const OnvifServer = require('./src/onvif-server');
+const { createRtspProxy } = require('./src/rtsp-proxy');
 const { readAndCheckConfig } = require('./src/config-tools');
 
 const logger = winston.createLogger({
@@ -66,7 +66,7 @@ if (args) {
     for (let destinationAddress in proxies) {
         for (let sourcePort in proxies[destinationAddress]) {
             logger.info(`PROXY: ${sourcePort} --> ${destinationAddress}:${proxies[destinationAddress][sourcePort]}`);
-            tcpProxy.createProxy(sourcePort, destinationAddress, proxies[destinationAddress][sourcePort]);
+            createRtspProxy(logger, Number(sourcePort), destinationAddress, proxies[destinationAddress][sourcePort]);
         }
     }
 
