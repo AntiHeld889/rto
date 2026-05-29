@@ -27,5 +27,9 @@
     "winston": "^3.19.0",
     "xml2js": "0.6.2",
     "yaml": "^2.9.0"
+  },
+  "scripts": {
+    "check": "for file in main.js src/*.js; do node --check \"$file\"; done",
+    "test": "npm run check"
   }
 }
