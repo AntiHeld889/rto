@@ -828,7 +828,12 @@ ${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '        
                 const targetUrl = new URL(snapshotPath, `http://${this.config.target.hostname}:${this.config.target.ports.snapshot}`);
                 this.logger.debug(`Proxying snapshot from ${targetUrl}`);
 
-                const proxyRequest = http.get(targetUrl, proxyResponse => {
+                const proxyHeaders = {};
+                if (request.headers.authorization) {
+                    proxyHeaders.Authorization = request.headers.authorization;
+                }
+
+                const proxyRequest = http.get(targetUrl, { headers: proxyHeaders }, proxyResponse => {
                     const headers = {
                         'Content-Type': proxyResponse.headers['content-type'] || 'image/jpeg',
                         'Cache-Control': 'no-cache'
@@ -836,6 +841,9 @@ ${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '        
 
                     if (proxyResponse.headers['content-length']) {
                         headers['Content-Length'] = proxyResponse.headers['content-length'];
+                    }
+                    if (proxyResponse.headers['www-authenticate']) {
+                        headers['WWW-Authenticate'] = proxyResponse.headers['www-authenticate'];
                     }
 
                     this.logger.debug(`Streaming snapshot with status ${proxyResponse.statusCode}`);
