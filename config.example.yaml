@@ -18,7 +18,7 @@ onvif:
       enabled: true                                      # Set false if the RTSP stream has no audio track
       encoding: AAC                                      # Match the RTSP audio codec: AAC, G711, or G726
       bitrate: 128                                       # Audio bitrate in kb/s
-      sampleRate: 8000                                   # Audio sample rate in Hz
+      sampleRate: 8                                      # ONVIF audio sample rate in kHz (for example 8, 16, 44, or 48)
       channels: 1                                        # Number of audio channels in the RTSP stream
     ports:                                              # Virtual server ports. No need to change these unles you run into port already in use problems
       server: 8081

@@ -85,7 +85,7 @@ onvif:
       enabled: true                                      # Set false if the RTSP stream has no audio track
       encoding: AAC                                      # Match the RTSP audio codec: AAC, G711, or G726
       bitrate: 128                                       # Audio bitrate in kb/s
-      sampleRate: 8000                                   # Audio sample rate in Hz
+      sampleRate: 8                                      # ONVIF audio sample rate in kHz (for example 8, 16, 44, or 48)
       channels: 1                                        # Number of audio channels in the RTSP stream
     ports:                                              # Virtual server ports. The same values can be reused because each camera has its own virtual IP
       server: 8081
@@ -225,7 +225,24 @@ Instead you will have to enter them in the software that you plan on consuming t
 
 Next you need to figure out the resolution and framerate for the stream. If you don't know them, you can use VLC to open the RTSP stream and check the _Media Information_ (Window -> Media Information) for the _"Video Resolution"_ and _"Frame rate"_ on the _"Codec Details"_ page, and the _"Stream bitrate"_ on the _"Statistics"_ page. The bitrate will fluctuate quite a bit most likely, so just pick a number that is close to it (e.g. 1024, 2048, 4096 ..).
 
-Audio is advertised through ONVIF when `audio.enabled` is not set to `false`. The RTSP proxy does not transcode or generate a separate audio stream; clients receive the audio track directly from the original RTSP stream. Set `audio.encoding`, `audio.bitrate`, `audio.sampleRate`, and `audio.channels` to match the source stream so ONVIF clients see the correct metadata.
+### ONVIF and RTSP audio compatibility
+
+As of June 6, 2026, the current ONVIF Network Interface Specification release is **25.12 (December 2025)**. This proxy implements the established ONVIF Device and Media1 (`ver10`) interfaces used by Profile S clients; it does not claim full ONVIF 25.12 or Profile T conformance. Profile S is being deprecated by ONVIF, with March 31, 2027 as the last date for new product conformance submissions, but remains relevant for legacy clients such as the currently targeted UniFi Protect integration.
+
+Audio is advertised through ONVIF when `audio.enabled` is not set to `false`. The RTSP proxy is a byte-for-byte TCP proxy: it does not inspect SDP, transcode codecs, create an audio track, or verify that the source contains audio. A client requesting RTP over RTSP/TCP receives every track offered by the original RTSP server, including audio.
+
+The Media1 interface can describe only `AAC`, `G711`, or `G726`. Set `audio.encoding`, `audio.bitrate` (kb/s), `audio.sampleRate` (kHz), and `audio.channels` to match the source stream. Common RTSP codec names map as follows:
+
+| RTSP/SDP codec | `audio.encoding` | Notes |
+| --- | --- | --- |
+| AAC (`MPEG4-GENERIC`, `MP4A-LATM`) | `AAC` | Passed through; no conversion is performed. |
+| G.711 µ-law (`PCMU`) or A-law (`PCMA`) | `G711` | ONVIF Media1 does not distinguish µ-law from A-law in this field. |
+| G.726 | `G726` | Bitrate and sample rate must match the source. |
+| Opus or another codec | Not representable in Media1 | The RTSP bytes can pass through, but this proxy cannot advertise that codec correctly through its Media1 service. |
+
+Use `ffprobe -v error -show_entries stream=index,codec_type,codec_name,sample_rate,channels -of default=noprint_wrappers=1 rtsp://HOST:PORT/PATH` to inspect the source. Values such as `8000` Hz from `ffprobe` must be configured as `sampleRate: 8` because ONVIF Media1 expresses the value in kHz. Legacy configurations using Hz are still normalized and logged with a warning.
+
+Official references: [ONVIF specifications](https://www.onvif.org/profiles/specifications/), [specification history](https://www.onvif.org/profiles/specifications/specification-history/), and [Profile S](https://www.onvif.org/profiles/profile-s/).
 
 You can either randomly change a few numbers of the UUID, or use a UUIDv4 generator[^3].
 
