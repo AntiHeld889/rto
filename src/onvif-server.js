@@ -4,13 +4,13 @@ const path = require('path');
 const dgram = require('dgram');
 const xml2js = require('xml2js');
 const { v1: uuidv1 } = require('uuid');
-const url = require('url');
 
 // Inline WSDL templates with runtime XAddr values.
 const ONVIF_DEVICE_NAMESPACE = 'http://www.onvif.org/ver10/device/wsdl';
 const ONVIF_MEDIA_NAMESPACE = 'http://www.onvif.org/ver10/media/wsdl';
 const ONVIF_SCHEMA_NAMESPACE = 'http://www.onvif.org/ver10/schema';
 const ONVIF_SUPPORTED_VERSION = { Major: 2, Minor: 6 };
+const MAX_SOAP_BODY_SIZE = 1024 * 1024;
 
 
 function escapeXml(value) {
@@ -20,6 +20,50 @@ function escapeXml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&apos;');
+}
+
+function sendTextResponse(response, statusCode, message) {
+    if (response.headersSent) {
+        response.destroy();
+        return;
+    }
+
+    response.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end(message);
+}
+
+function readSoapBody(request, response, onComplete) {
+    const chunks = [];
+    let size = 0;
+    let exceededLimit = false;
+
+    request.on('data', chunk => {
+        if (exceededLimit) {
+            return;
+        }
+
+        size += chunk.length;
+        if (size > MAX_SOAP_BODY_SIZE) {
+            exceededLimit = true;
+            chunks.length = 0;
+            sendTextResponse(response, 413, 'SOAP request body too large');
+            return;
+        }
+
+        chunks.push(chunk);
+    });
+
+    request.on('end', () => {
+        if (!exceededLimit) {
+            onComplete(Buffer.concat(chunks, size).toString('utf8'));
+        }
+    });
+
+    request.on('error', error => {
+        if (!response.writableEnded) {
+            sendTextResponse(response, 400, `Failed to read request: ${error.message}`);
+        }
+    });
 }
 
 function createServiceWsdl(serviceName, portName, namespace, bindingName, address, importFile) {
@@ -50,6 +94,13 @@ module.exports = class OnvifServer {
     constructor(logger, config) {
         this.config = config;
         this.logger = logger;
+        this.placeholderSnapshot = null;
+
+        try {
+            this.placeholderSnapshot = fs.readFileSync(path.join(__dirname, '..', 'resources', 'snapshot.png'));
+        } catch (error) {
+            this.logger.warn(`Unable to load placeholder snapshot: ${error.message}`);
+        }
 
         this.config.hostname = getIp4FromMac(logger, this.config.mac);
         if (!this.config.hostname)
@@ -661,143 +712,146 @@ ${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '        
     startHttpServer() {
         this.logger.info(`SERVER: ${this.config.name} - HTTP listening on ${this.config.hostname}:${this.config.ports.server}`);
 
-        const self = this;
+        const servePlaceholder = (response) => {
+            if (!this.placeholderSnapshot) {
+                sendTextResponse(response, 404, 'Snapshot not found');
+                return;
+            }
 
-        this.server = http.createServer((request, response) => {
-            const pathname = url.parse(request.url).pathname;
-            const clientIp = request.socket.remoteAddress;
+            response.writeHead(200, {
+                'Content-Type': 'image/png',
+                'Content-Length': this.placeholderSnapshot.length,
+                'Cache-Control': 'no-cache'
+            });
+            response.end(this.placeholderSnapshot);
+        };
 
-            self.logger.debug(`HTTP ${request.method} ${pathname} from ${clientIp}`);
+        const handleSoapRequest = (request, response, serviceName, handler) => {
+            if (request.method === 'GET') {
+                response.writeHead(200, { 'Content-Type': 'text/xml; charset=utf-8' });
+                response.end(serviceName === 'device_service' ? this.createDeviceWsdl() : this.createMediaWsdl());
+                return;
+            }
 
-            if (pathname === '/snapshot.png') {
-                // Serve static placeholder image
-                try {
-                    const imagePath = path.join(process.cwd(), 'resources', 'snapshot.png');
-                    const image = fs.readFileSync(imagePath);
-                    response.writeHead(200, { 'Content-Type': 'image/png' });
-                    response.end(image, 'binary');
-                } catch (err) {
-                    response.writeHead(404, { 'Content-Type': 'text/plain' });
-                    response.end('Snapshot not found');
-                }
-            } else if (pathname === '/snapshot') {
-                // Proxy snapshot from target server via HTTP
-                // This is more reliable than TCP proxy for large binary data
-                self.logger.info(`Snapshot request from ${clientIp}`);
+            if (request.method !== 'POST') {
+                response.writeHead(405, {
+                    Allow: 'GET, POST',
+                    'Content-Type': 'text/plain; charset=utf-8'
+                });
+                response.end('Method not allowed');
+                return;
+            }
 
-                const snapshotPath = self.config.highQuality?.snapshot;
-                if (!snapshotPath || !self.config.target?.hostname || !self.config.target?.ports?.snapshot) {
-                    // Fallback to static placeholder
-                    self.logger.warn('Snapshot config missing, serving placeholder');
-                    try {
-                        const imagePath = path.join(process.cwd(), 'resources', 'snapshot.png');
-                        const image = fs.readFileSync(imagePath);
-                        response.writeHead(200, { 'Content-Type': 'image/png' });
-                        response.end(image, 'binary');
-                    } catch (err) {
-                        response.writeHead(404, { 'Content-Type': 'text/plain' });
-                        response.end('Snapshot not found');
-                    }
+            readSoapBody(request, response, body => {
+                const actionMatch = body.match(/<(?:\w+:)?(Get\w+|Set\w+|Create\w+|Delete\w+)/i);
+                const action = actionMatch ? actionMatch[1] : 'unknown';
+                const clientIp = request.socket.remoteAddress;
+
+                this.logger.info(`SOAP ${serviceName}: ${action} from ${clientIp}`);
+                this.logger.debug(`SOAP Request:\n${body}`);
+
+                const soapResponse = handler.call(this, body);
+                if (soapResponse) {
+                    this.logger.debug(`SOAP Response:\n${soapResponse}`);
+                    response.writeHead(200, {
+                        'Content-Type': 'application/soap+xml; charset=utf-8'
+                    });
+                    response.end(soapResponse);
                     return;
                 }
 
-                const targetUrl = `http://${self.config.target.hostname}:${self.config.target.ports.snapshot}${snapshotPath}`;
-                self.logger.debug(`Proxying snapshot from ${targetUrl}`);
+                this.logger.warn(`Unknown SOAP action in ${serviceName}: ${action}`);
+                sendTextResponse(response, 500, 'Unknown SOAP action');
+            });
+        };
 
-                const proxyReq = http.get(targetUrl, (proxyRes) => {
-                    const chunks = [];
-                    proxyRes.on('data', chunk => chunks.push(chunk));
-                    proxyRes.on('end', () => {
-                        const buffer = Buffer.concat(chunks);
-                        self.logger.debug(`Snapshot proxied: ${buffer.length} bytes, status ${proxyRes.statusCode}`);
-                        response.writeHead(proxyRes.statusCode, {
-                            'Content-Type': proxyRes.headers['content-type'] || 'image/jpeg',
-                            'Content-Length': buffer.length,
-                            'Cache-Control': 'no-cache'
-                        });
-                        response.end(buffer);
-                    });
-                    proxyRes.on('error', (err) => {
-                        self.logger.error(`Snapshot proxy error: ${err.message}`);
-                        response.writeHead(502, { 'Content-Type': 'text/plain' });
-                        response.end('Snapshot proxy error');
+        this.server = http.createServer((request, response) => {
+            const pathname = new URL(request.url, 'http://localhost').pathname;
+            const clientIp = request.socket.remoteAddress;
+
+            this.logger.debug(`HTTP ${request.method} ${pathname} from ${clientIp}`);
+
+            if (pathname === '/snapshot.png') {
+                if (request.method !== 'GET') {
+                    response.writeHead(405, { Allow: 'GET' });
+                    response.end();
+                    return;
+                }
+
+                servePlaceholder(response);
+                return;
+            }
+
+            if (pathname === '/snapshot') {
+                if (request.method !== 'GET') {
+                    response.writeHead(405, { Allow: 'GET' });
+                    response.end();
+                    return;
+                }
+
+                this.logger.info(`Snapshot request from ${clientIp}`);
+
+                const snapshotPath = this.config.highQuality?.snapshot;
+                if (!snapshotPath || !this.config.target?.hostname || !this.config.target?.ports?.snapshot) {
+                    this.logger.warn('Snapshot config missing, serving placeholder');
+                    servePlaceholder(response);
+                    return;
+                }
+
+                const targetUrl = new URL(snapshotPath, `http://${this.config.target.hostname}:${this.config.target.ports.snapshot}`);
+                this.logger.debug(`Proxying snapshot from ${targetUrl}`);
+
+                const proxyRequest = http.get(targetUrl, proxyResponse => {
+                    const headers = {
+                        'Content-Type': proxyResponse.headers['content-type'] || 'image/jpeg',
+                        'Cache-Control': 'no-cache'
+                    };
+
+                    if (proxyResponse.headers['content-length']) {
+                        headers['Content-Length'] = proxyResponse.headers['content-length'];
+                    }
+
+                    this.logger.debug(`Streaming snapshot with status ${proxyResponse.statusCode}`);
+                    response.writeHead(proxyResponse.statusCode || 502, headers);
+                    proxyResponse.pipe(response);
+                    proxyResponse.on('error', error => {
+                        this.logger.error(`Snapshot proxy error: ${error.message}`);
+                        if (!response.writableEnded) {
+                            response.destroy(error);
+                        }
                     });
                 });
 
-                proxyReq.setTimeout(10000, () => {
-                    self.logger.error(`Snapshot request timed out: ${targetUrl}`);
-                    proxyReq.destroy(new Error('Snapshot request timed out'));
+                proxyRequest.setTimeout(10000, () => {
+                    proxyRequest.destroy(new Error('Snapshot request timed out'));
                 });
 
-                proxyReq.on('error', (err) => {
-                    if (!response.headersSent) {
-                        self.logger.error(`Snapshot request error: ${err.message}`);
-                        response.writeHead(502, { 'Content-Type': 'text/plain' });
-                        response.end('Snapshot request error');
+                proxyRequest.on('error', error => {
+                    this.logger.error(`Snapshot request error: ${error.message}`);
+                    if (!response.writableEnded) {
+                        sendTextResponse(response, 502, 'Snapshot request error');
                     }
                 });
-            } else if (pathname === '/onvif/device_service') {
-                if (request.method === 'GET') {
-                    response.writeHead(200, { 'Content-Type': 'text/xml' });
-                    response.end(self.createDeviceWsdl());
-                } else if (request.method === 'POST') {
-                    let body = '';
-                    request.on('data', chunk => body += chunk.toString());
-                    request.on('end', () => {
-                        // Extract SOAP action name
-                        const actionMatch = body.match(/<(?:\w+:)?(Get\w+|Set\w+|Create\w+|Delete\w+)/i);
-                        const action = actionMatch ? actionMatch[1] : 'unknown';
 
-                        self.logger.info(`SOAP device_service: ${action} from ${clientIp}`);
-                        self.logger.debug(`SOAP Request:\n${body}`);
-
-                        const soapResponse = self.handleDeviceService(body);
-                        if (soapResponse) {
-                            self.logger.debug(`SOAP Response:\n${soapResponse}`);
-                            response.writeHead(200, {
-                                'Content-Type': 'application/soap+xml; charset=utf-8'
-                            });
-                            response.end(soapResponse);
-                        } else {
-                            self.logger.warn(`Unknown SOAP action in device_service: ${action}`);
-                            response.writeHead(500, { 'Content-Type': 'text/plain' });
-                            response.end('Unknown SOAP action');
-                        }
-                    });
-                }
-            } else if (pathname === '/onvif/media_service') {
-                if (request.method === 'GET') {
-                    response.writeHead(200, { 'Content-Type': 'text/xml' });
-                    response.end(self.createMediaWsdl());
-                } else if (request.method === 'POST') {
-                    let body = '';
-                    request.on('data', chunk => body += chunk.toString());
-                    request.on('end', () => {
-                        // Extract SOAP action name
-                        const actionMatch = body.match(/<(?:\w+:)?(Get\w+|Set\w+|Create\w+|Delete\w+)/i);
-                        const action = actionMatch ? actionMatch[1] : 'unknown';
-
-                        self.logger.info(`SOAP media_service: ${action} from ${clientIp}`);
-                        self.logger.debug(`SOAP Request:\n${body}`);
-
-                        const soapResponse = self.handleMediaService(body);
-                        if (soapResponse) {
-                            self.logger.debug(`SOAP Response:\n${soapResponse}`);
-                            response.writeHead(200, {
-                                'Content-Type': 'application/soap+xml; charset=utf-8'
-                            });
-                            response.end(soapResponse);
-                        } else {
-                            self.logger.warn(`Unknown SOAP action in media_service: ${action}`);
-                            response.writeHead(500, { 'Content-Type': 'text/plain' });
-                            response.end('Unknown SOAP action');
-                        }
-                    });
-                }
-            } else {
-                response.writeHead(404, { 'Content-Type': 'text/plain' });
-                response.end('Not found');
+                response.on('close', () => {
+                    if (!response.writableEnded) {
+                        proxyRequest.destroy();
+                    }
+                });
+                return;
             }
+
+            if (pathname === '/onvif/device_service') {
+                handleSoapRequest(request, response, 'device_service', this.handleDeviceService);
+                return;
+            }
+
+            if (pathname === '/onvif/media_service') {
+                handleSoapRequest(request, response, 'media_service', this.handleMediaService);
+                return;
+            }
+
+            sendTextResponse(response, 404, 'Not found');
         });
 
         this.server.listen(this.config.ports.server, this.config.hostname);
