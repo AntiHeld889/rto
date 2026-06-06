@@ -30,6 +30,6 @@
   },
   "scripts": {
     "check": "for file in main.js src/*.js; do node --check \"$file\"; done",
-    "test": "npm run check"
+    "test": "npm run check && node --test"
   }
 }

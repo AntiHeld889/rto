@@ -87,7 +87,7 @@ onvif:
       bitrate: 128                                       # Audio bitrate in kb/s
       sampleRate: 8000                                   # Audio sample rate in Hz
       channels: 1                                        # Number of audio channels in the RTSP stream
-    ports:                                              # Virtual server ports. No need to change these unles you run into port already in use problems
+    ports:                                              # Virtual server ports. The same values can be reused because each camera has its own virtual IP
       server: 8081
       rtsp: 8554
     #mac - automatically added here and IP comes from DHCP- Add your own if you know what you doing
