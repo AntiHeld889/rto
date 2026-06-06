@@ -9,7 +9,7 @@ function formatEndpoint(socket) {
     return `${socket.remoteAddress || 'unknown'}:${socket.remotePort || 0}`;
 }
 
-function createRtspProxy(logger, sourcePort, targetHost, targetPort) {
+function createRtspProxy(logger, sourceHost, sourcePort, targetHost, targetPort) {
     const server = net.createServer({ allowHalfOpen: false }, (clientSocket) => {
         tuneSocket(clientSocket);
 
@@ -41,11 +41,11 @@ function createRtspProxy(logger, sourcePort, targetHost, targetPort) {
     });
 
     server.on('error', (error) => {
-        logger.error(`RTSP proxy failed on port ${sourcePort}: ${error.message}`);
+        logger.error(`RTSP proxy failed on ${sourceHost}:${sourcePort}: ${error.message}`);
     });
 
-    server.listen(sourcePort, () => {
-        logger.info(`RTSP proxy listening on ${sourcePort} and forwarding to ${targetHost}:${targetPort}`);
+    server.listen(sourcePort, sourceHost, () => {
+        logger.info(`RTSP proxy listening on ${sourceHost}:${sourcePort} and forwarding to ${targetHost}:${targetPort}`);
     });
 
     return server;

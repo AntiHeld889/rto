@@ -36,7 +36,6 @@ if (args) {
 
     const config = readAndCheckConfig(logger, args.config);
 
-    let proxies = {};
     for (let onvifConfig of config.onvif) {
 
         let server = new OnvifServer(logger, onvifConfig);
@@ -49,24 +48,22 @@ if (args) {
             if (process.env.DEBUG)
                 server.enableDebugOutput()
 
-            if (!proxies[onvifConfig.target.hostname])
-                proxies[onvifConfig.target.hostname] = {}
-
-            if (onvifConfig.ports.rtsp && onvifConfig.target.ports.rtsp)
-                proxies[onvifConfig.target.hostname][onvifConfig.ports.rtsp] = onvifConfig.target.ports.rtsp;
+            if (onvifConfig.ports.rtsp && onvifConfig.target.ports.rtsp) {
+                logger.info(`PROXY: ${server.getHostname()}:${onvifConfig.ports.rtsp} --> ${onvifConfig.target.hostname}:${onvifConfig.target.ports.rtsp}`);
+                createRtspProxy(
+                    logger,
+                    server.getHostname(),
+                    onvifConfig.ports.rtsp,
+                    onvifConfig.target.hostname,
+                    onvifConfig.target.ports.rtsp
+                );
+            }
             // Note: snapshot is now handled via HTTP proxy endpoint /snapshot on the server port,
             // so we no longer need a TCP proxy for snapshot
         } else {
             logger.error(`Failed to find IP address for MAC address ${onvifConfig.mac}`)
             process.exitCode = 1;
             return;
-        }
-    }
-
-    for (let destinationAddress in proxies) {
-        for (let sourcePort in proxies[destinationAddress]) {
-            logger.info(`PROXY: ${sourcePort} --> ${destinationAddress}:${proxies[destinationAddress][sourcePort]}`);
-            createRtspProxy(logger, Number(sourcePort), destinationAddress, proxies[destinationAddress][sourcePort]);
         }
     }
 
