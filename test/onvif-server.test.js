@@ -66,9 +66,9 @@ function close(server) {
     });
 }
 
-function request({ host, port, path, method = 'GET', body }) {
+function request({ host, port, path, method = 'GET', headers, body }) {
     return new Promise((resolve, reject) => {
-        const req = http.request({ host, port, path, method }, response => {
+        const req = http.request({ host, port, path, method, headers }, response => {
             const chunks = [];
             response.on('data', chunk => chunks.push(chunk));
             response.on('end', () => resolve({
@@ -158,6 +158,52 @@ test('streams snapshot response headers and body from the upstream camera', asyn
     assert.equal(response.headers['content-type'], 'image/jpeg');
     assert.equal(Number(response.headers['content-length']), snapshot.length);
     assert.deepEqual(response.body, snapshot);
+});
+
+test('forwards snapshot authentication headers in both directions', async (t) => {
+    const authorization = 'Basic dXNlcjpwYXNzd29yZA==';
+    const challenge = 'Basic realm="camera"';
+    const snapshot = Buffer.from('authenticated snapshot');
+    const upstream = http.createServer((req, res) => {
+        if (req.headers.authorization !== authorization) {
+            res.writeHead(401, { 'WWW-Authenticate': challenge });
+            res.end('Authentication required');
+            return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+        res.end(snapshot);
+    });
+    await listen(upstream);
+    t.after(() => close(upstream));
+
+    const config = createConfig({
+        target: {
+            hostname: '127.0.0.1',
+            ports: {
+                rtsp: 554,
+                snapshot: upstream.address().port
+            }
+        },
+        highQuality: { snapshot: '/protected.jpg' }
+    });
+    const server = await startOnvifServer(t, config);
+    const endpoint = {
+        host: server.getHostname(),
+        port: server.server.address().port,
+        path: '/snapshot'
+    };
+
+    const unauthorizedResponse = await request(endpoint);
+    assert.equal(unauthorizedResponse.statusCode, 401);
+    assert.equal(unauthorizedResponse.headers['www-authenticate'], challenge);
+
+    const authorizedResponse = await request({
+        ...endpoint,
+        headers: { Authorization: authorization }
+    });
+    assert.equal(authorizedResponse.statusCode, 200);
+    assert.deepEqual(authorizedResponse.body, snapshot);
 });
 
 test('advertises schema-compliant ONVIF audio metadata in kHz', () => {
