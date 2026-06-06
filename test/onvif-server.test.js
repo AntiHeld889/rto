@@ -160,3 +160,52 @@ test('streams snapshot response headers and body from the upstream camera', asyn
     assert.deepEqual(response.body, snapshot);
 });
 
+test('advertises schema-compliant ONVIF audio metadata in kHz', () => {
+    const server = new OnvifServer(silentLogger, createConfig({
+        audio: {
+            enabled: true,
+            encoding: 'G711',
+            bitrate: 64,
+            sampleRate: 8,
+            channels: 1
+        }
+    }));
+
+    const response = server.handleMediaService('<trt:GetProfiles/>');
+
+    assert.match(response, /<tt:AudioSourceConfiguration token="audio_src_hq_config_token">/);
+    assert.match(
+        response,
+        /<tt:AudioEncoderConfiguration token="audio_encoder_hq_config_token">[\s\S]*?<tt:Encoding>G711<\/tt:Encoding>[\s\S]*?<tt:Bitrate>64<\/tt:Bitrate>[\s\S]*?<tt:SampleRate>8<\/tt:SampleRate>[\s\S]*?<tt:Multicast>[\s\S]*?<tt:IPv4Address>0\.0\.0\.0<\/tt:IPv4Address>[\s\S]*?<tt:AutoStart>false<\/tt:AutoStart>[\s\S]*?<\/tt:Multicast>[\s\S]*?<\/tt:AudioEncoderConfiguration>/
+    );
+});
+
+test('normalizes legacy audio sample rates in Hz to ONVIF kHz', () => {
+    const warnings = [];
+    const logger = {
+        ...silentLogger,
+        warn(message) {
+            warnings.push(message);
+        }
+    };
+    const server = new OnvifServer(logger, createConfig({
+        audio: { enabled: true, sampleRate: 48000 }
+    }));
+
+    const response = server.handleMediaService('<trt:GetAudioEncoderConfigurations/>');
+
+    assert.match(response, /<tt:SampleRate>48<\/tt:SampleRate>/);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /48000 Hz is deprecated; use 48 kHz/);
+});
+
+test('omits ONVIF audio configurations when audio is disabled', () => {
+    const server = new OnvifServer(silentLogger, createConfig({
+        audio: { enabled: false }
+    }));
+
+    const response = server.handleMediaService('<trt:GetProfiles/>');
+
+    assert.doesNotMatch(response, /AudioSourceConfiguration/);
+    assert.doesNotMatch(response, /AudioEncoderConfiguration/);
+});

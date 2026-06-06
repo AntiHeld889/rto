@@ -9,6 +9,8 @@ const { v1: uuidv1 } = require('uuid');
 const ONVIF_DEVICE_NAMESPACE = 'http://www.onvif.org/ver10/device/wsdl';
 const ONVIF_MEDIA_NAMESPACE = 'http://www.onvif.org/ver10/media/wsdl';
 const ONVIF_SCHEMA_NAMESPACE = 'http://www.onvif.org/ver10/schema';
+// GetServices reports the implemented Media1/Device service baseline, not the publication date
+// of the complete ONVIF specification set.
 const ONVIF_SUPPORTED_VERSION = { Major: 2, Minor: 6 };
 const MAX_SOAP_BODY_SIZE = 1024 * 1024;
 
@@ -112,11 +114,22 @@ module.exports = class OnvifServer {
             Resolution: { Width: this.config.highQuality.width, Height: this.config.highQuality.height }
         };
 
+        const configuredAudioSampleRate = this.config.audio?.sampleRate ?? 8;
+        const audioSampleRate = configuredAudioSampleRate >= 1000
+            ? Math.round(configuredAudioSampleRate / 1000)
+            : configuredAudioSampleRate;
+
+        if (configuredAudioSampleRate >= 1000) {
+            this.logger.warn(
+                `Audio sampleRate ${configuredAudioSampleRate} Hz is deprecated; use ${audioSampleRate} kHz as required by ONVIF Media1.`
+            );
+        }
+
         this.audioConfig = {
             enabled: this.config.audio?.enabled !== false,
             encoding: this.config.audio?.encoding || 'AAC',
             bitrate: this.config.audio?.bitrate || 128,
-            sampleRate: this.config.audio?.sampleRate || 8000
+            sampleRate: audioSampleRate
         };
 
         this.audioSource = {
@@ -273,6 +286,18 @@ ${indent}    <tt:Bounds x="${profile.VideoSourceConfiguration.Bounds.x}" y="${pr
 ${indent}</${elementName}>`;
     }
 
+    createMulticastConfigurationXml(indent = '') {
+        return `${indent}<tt:Multicast>
+${indent}    <tt:Address>
+${indent}        <tt:Type>IPv4</tt:Type>
+${indent}        <tt:IPv4Address>0.0.0.0</tt:IPv4Address>
+${indent}    </tt:Address>
+${indent}    <tt:Port>0</tt:Port>
+${indent}    <tt:TTL>0</tt:TTL>
+${indent}    <tt:AutoStart>false</tt:AutoStart>
+${indent}</tt:Multicast>`;
+    }
+
     createVideoEncoderConfigurationXml(profile, elementName = 'tt:VideoEncoderConfiguration', indent = '') {
         return `${indent}<${elementName} token="${profile.VideoEncoderConfiguration.token}">
 ${indent}    <tt:Name>${profile.VideoEncoderConfiguration.Name}</tt:Name>
@@ -292,6 +317,7 @@ ${indent}    <tt:H264>
 ${indent}        <tt:GovLength>${profile.VideoEncoderConfiguration.H264.GovLength}</tt:GovLength>
 ${indent}        <tt:H264Profile>${profile.VideoEncoderConfiguration.H264.H264Profile}</tt:H264Profile>
 ${indent}    </tt:H264>
+${this.createMulticastConfigurationXml(`${indent}    `)}
 ${indent}    <tt:SessionTimeout>${profile.VideoEncoderConfiguration.SessionTimeout}</tt:SessionTimeout>
 ${indent}</${elementName}>`;
     }
@@ -311,6 +337,7 @@ ${indent}    <tt:UseCount>${profile.AudioEncoderConfiguration.UseCount}</tt:UseC
 ${indent}    <tt:Encoding>${profile.AudioEncoderConfiguration.Encoding}</tt:Encoding>
 ${indent}    <tt:Bitrate>${profile.AudioEncoderConfiguration.Bitrate}</tt:Bitrate>
 ${indent}    <tt:SampleRate>${profile.AudioEncoderConfiguration.SampleRate}</tt:SampleRate>
+${this.createMulticastConfigurationXml(`${indent}    `)}
 ${indent}    <tt:SessionTimeout>${profile.AudioEncoderConfiguration.SessionTimeout}</tt:SessionTimeout>
 ${indent}</${elementName}>`;
     }
