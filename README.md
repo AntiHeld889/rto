@@ -37,17 +37,17 @@ Create a directory locally where you will keep your compose and config files.
 1. Create a directory and change into it
   - `mkdir rtsp-to-onvif` and `cd rtsp-to-onvif`
 2. Download the docker-compose.example.yaml file
-  - `wget https://raw.githubusercontent.com/itsmepetrov/rtsp-to-onvif/refs/heads/release/docker-compose.example.yaml`
+  - `wget https://raw.githubusercontent.com/AntiHeld889/rto/refs/heads/release/docker-compose.example.yaml`
   - `cp docker-compose.example.yaml docker-compose.yaml`
 3. Download the config.example.yaml and clone it
-  - `wget https://raw.githubusercontent.com/itsmepetrov/rtsp-to-onvif/refs/heads/release/config.example.yaml`
+  - `wget https://raw.githubusercontent.com/AntiHeld889/rto/refs/heads/release/config.example.yaml`
   - `cp config.example.yaml config.yaml`
 4. Edit and configure your cameras
   - `nano config.yaml`
 5. Run compose in attached mode and check for any messages.
   - `sudo docker compose up`
 6. If you see the cameras show up in Protect then you can run docker in detached mode (or use Dockge, Portainer, etc...)
-  - `sudo docker compose up d`
+  - `sudo docker compose up -d`
 
 
 ## Config file

@@ -245,6 +245,27 @@ test('normalizes legacy audio sample rates in Hz to ONVIF kHz', () => {
     assert.match(warnings[0], /48000 Hz is deprecated; use 48 kHz/);
 });
 
+test('reports the timezone with POSIX sign convention in GetSystemDateAndTime', () => {
+    const server = new OnvifServer(silentLogger, createConfig());
+
+    const response = server.handleDeviceService('<tds:GetSystemDateAndTime/>');
+
+    // POSIX TZ strings invert the sign: west of UTC (positive getTimezoneOffset) is "+".
+    const expectedSign = new Date().getTimezoneOffset() > 0 ? '\\+' : '-';
+    assert.match(response, new RegExp(`<tt:TZ>UTC${expectedSign}\\d`));
+});
+
+test('returns a single video source configuration by token', () => {
+    const server = new OnvifServer(silentLogger, createConfig());
+
+    const response = server.handleMediaService(
+        '<trt:GetVideoSourceConfiguration><trt:ConfigurationToken>video_src_config_token</trt:ConfigurationToken></trt:GetVideoSourceConfiguration>'
+    );
+
+    assert.match(response, /<trt:GetVideoSourceConfigurationResponse>/);
+    assert.match(response, /<trt:Configuration token="video_src_config_token">/);
+});
+
 test('omits ONVIF audio configurations when audio is disabled', () => {
     const server = new OnvifServer(silentLogger, createConfig({
         audio: { enabled: false }

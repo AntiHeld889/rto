@@ -84,6 +84,7 @@ function readAndCheckConfig(logger, configFile) {
     }
 
     let isSaveRequired = false;
+    let interfacesCreated = false;
     let proxyCounter = 0;
     for (let onvifConfig of config.onvif) {
         validateOnvifConfig(logger, onvifConfig, proxyCounter);
@@ -112,7 +113,7 @@ function readAndCheckConfig(logger, configFile) {
                 const stdout = execFileSync('ip', ['link', 'add', vlanName, 'link', onvifConfig.dev, 'address', onvifConfig.mac, 'type', 'macvlan', 'mode', 'bridge']);
                 logger.debug(stdout);
             } catch (error) {
-                logger.debug(error.message);
+                logger.warn(`NET_CONF: Failed to create ${vlanName}: ${error.message}`);
             }
 
             // Use DHCP to obtain IP address (also brings interface up)
@@ -121,14 +122,21 @@ function readAndCheckConfig(logger, configFile) {
                 const stdout = execFileSync('dhclient', [vlanName]);
                 logger.debug(stdout);
             } catch (error) {
-                logger.debug(error.message);
+                logger.warn(`NET_CONF: dhclient failed for ${vlanName}: ${error.message}`);
             }
+
+            interfacesCreated = true;
         }
         proxyCounter++
     }
 
     if (isSaveRequired) {
         writeConfig(logger, configFile, config);
+    }
+
+    // Give freshly created interfaces a moment to finish their DHCP setup,
+    // even when the config itself did not change (e.g. after a container restart).
+    if (isSaveRequired || interfacesCreated) {
         sleep(2);
     }
 

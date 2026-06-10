@@ -5,7 +5,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY ["package.json", "package-lock.json*", "./"]
-RUN npm ci --production --silent
+RUN npm ci --omit=dev --silent
 
 COPY . .
 

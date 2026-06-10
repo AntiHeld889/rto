@@ -62,10 +62,8 @@ if (args) {
             // so we no longer need a TCP proxy for snapshot
         } else {
             logger.error(`Failed to find IP address for MAC address ${onvifConfig.mac}`)
-            process.exitCode = 1;
-            return;
+            // Already-started servers would keep the event loop alive, so exit explicitly.
+            process.exit(1);
         }
     }
-
-    process.exitCode = 0;
 }

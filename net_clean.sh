@@ -1,5 +1,5 @@
 #! /bin/bash
-sudo ip link del dev rtsp2onvif_0
-sudo ip link del dev rtsp2onvif_1
-sudo ip link del dev rtsp2onvif_3
-sudo ip link del dev rtsp2onvif_4
+# Remove all virtual macvlan interfaces created by rtsp-to-onvif
+for dev in $(ip -o link show | awk -F': ' '{print $2}' | grep '^rtsp2onvif_'); do
+    sudo ip link del dev "$dev"
+done

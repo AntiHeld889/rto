@@ -106,7 +106,7 @@ module.exports = class OnvifServer {
 
         this.config.hostname = getIp4FromMac(logger, this.config.mac);
         if (!this.config.hostname)
-            return -1;
+            return;
 
         this.videoSource = {
             token: 'video_src_token',
@@ -357,7 +357,9 @@ ${indent}</${elementName}>`;
             let abs_offset = Math.abs(offset);
             let hrs_offset = Math.floor(abs_offset / 60);
             let mins_offset = (abs_offset % 60);
-            let tz = 'UTC' + (offset > 0 ? '-' : '+') + hrs_offset + (mins_offset === 0 ? '' : ':' + mins_offset);
+            // POSIX TZ strings invert the sign relative to common UTC notation:
+            // getTimezoneOffset() is positive west of UTC, which POSIX writes as "+".
+            let tz = 'UTC' + (offset > 0 ? '+' : '-') + hrs_offset + (mins_offset === 0 ? '' : ':' + mins_offset);
 
             return this.createSoapEnvelope(`
                 <tds:GetSystemDateAndTimeResponse>
@@ -562,6 +564,18 @@ ${profilesXml}
                 <trt:GetVideoSourceConfigurationsResponse>
 ${configsXml}
                 </trt:GetVideoSourceConfigurationsResponse>
+            `);
+        } else if (soapBody.includes('GetVideoSourceConfiguration')) {
+            let profile = this.profiles[0];
+            const requestedProfile = this.profiles.find(candidate => soapBody.includes(candidate.VideoSourceConfiguration.token));
+            if (requestedProfile) {
+                profile = requestedProfile;
+            }
+
+            return this.createSoapEnvelope(`
+                <trt:GetVideoSourceConfigurationResponse>
+${this.createVideoSourceConfigurationXml(profile, 'trt:Configuration', '                    ')}
+                </trt:GetVideoSourceConfigurationResponse>
             `);
         } else if (soapBody.includes('GetVideoEncoderConfigurations')) {
             const configsXml = this.profiles.map(profile => this.createVideoEncoderConfigurationXml(profile, 'trt:Configurations', '                    ')).join('\n');
@@ -889,6 +903,10 @@ ${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '        
             sendTextResponse(response, 404, 'Not found');
         });
 
+        this.server.on('error', error => {
+            this.logger.error(`SERVER: ${this.config.name} - HTTP server error on ${this.config.hostname}:${this.config.ports.server}: ${error.message}`);
+        });
+
         this.server.listen(this.config.ports.server, this.config.hostname);
     }
 
@@ -899,6 +917,10 @@ ${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '        
     startDiscovery() {
         this.discoveryMessageNo = 0;
         this.discoverySocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+        this.discoverySocket.on('error', error => {
+            this.logger.error(`SERVER: ${this.config.name} - Discovery socket error: ${error.message}`);
+        });
 
         this.discoverySocket.on('message', (message, remote) => {
 
@@ -964,7 +986,11 @@ ${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '        
         });
 
         this.discoverySocket.bind(3702, () => {
-            return this.discoverySocket.addMembership('239.255.255.250', this.config.hostname);
+            try {
+                this.discoverySocket.addMembership('239.255.255.250', this.config.hostname);
+            } catch (error) {
+                this.logger.error(`SERVER: ${this.config.name} - Failed to join discovery multicast group on ${this.config.hostname}: ${error.message}`);
+            }
         });
     }
 

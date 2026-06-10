@@ -1,6 +1,6 @@
 services:
   rtsp-to-onvif:
-    image: ghcr.io/itsmepetrov/rtsp-to-onvif:latest
+    image: ghcr.io/antiheld889/rto:latest
     hostname: rtsp-to-onvif
     #restart: unless-stopped
     volumes:
@@ -8,5 +8,5 @@ services:
     network_mode: "host"   
     cap_add:
       - NET_ADMIN
-    environment: # uncomment this to get more debug info during setup
-      DEBUG: 1
+    environment: # remove this once setup is complete to reduce log noise
+      DEBUG: "1"
