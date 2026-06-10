@@ -266,6 +266,51 @@ test('returns a single video source configuration by token', () => {
     assert.match(response, /<trt:Configuration token="video_src_config_token">/);
 });
 
+test('orders profile configurations according to the ONVIF schema sequence', () => {
+    const server = new OnvifServer(silentLogger, createConfig({
+        audio: { enabled: true }
+    }));
+
+    const response = server.handleMediaService('<trt:GetProfiles/>');
+
+    // xs:sequence: Name, VideoSourceConfiguration, AudioSourceConfiguration,
+    // VideoEncoderConfiguration, AudioEncoderConfiguration
+    assert.match(
+        response,
+        /<tt:Name>MainStream<\/tt:Name>[\s\S]*?<tt:VideoSourceConfiguration[\s\S]*?<tt:AudioSourceConfiguration[\s\S]*?<tt:VideoEncoderConfiguration[\s\S]*?<tt:AudioEncoderConfiguration/
+    );
+});
+
+test('answers GetVideoSourceConfigurationOptions instead of the singular configuration', () => {
+    const server = new OnvifServer(silentLogger, createConfig());
+
+    const response = server.handleMediaService('<trt:GetVideoSourceConfigurationOptions/>');
+
+    assert.match(response, /<trt:GetVideoSourceConfigurationOptionsResponse>/);
+    assert.match(response, /<tt:VideoSourceTokensAvailable>video_src_token<\/tt:VideoSourceTokensAvailable>/);
+    assert.doesNotMatch(response, /<trt:GetVideoSourceConfigurationResponse>/);
+});
+
+test('answers GetAudioSourceConfigurationOptions instead of the singular configuration', () => {
+    const server = new OnvifServer(silentLogger, createConfig({
+        audio: { enabled: true }
+    }));
+
+    const response = server.handleMediaService('<trt:GetAudioSourceConfigurationOptions/>');
+
+    assert.match(response, /<trt:GetAudioSourceConfigurationOptionsResponse>/);
+    assert.match(response, /<tt:InputTokensAvailable>audio_src_token<\/tt:InputTokensAvailable>/);
+    assert.doesNotMatch(response, /<trt:GetAudioSourceConfigurationResponse>/);
+});
+
+test('does not advertise PTZ in discovery scopes', () => {
+    // The discovery response template lives in startDiscovery; assert on the
+    // source to keep the test free of multicast sockets.
+    const fs = require('node:fs');
+    const source = fs.readFileSync(require.resolve('../src/onvif-server.js'), 'utf8');
+    assert.doesNotMatch(source, /onvif:\/\/www\.onvif\.org\/type\/ptz/);
+});
+
 test('omits ONVIF audio configurations when audio is disabled', () => {
     const server = new OnvifServer(silentLogger, createConfig({
         audio: { enabled: false }

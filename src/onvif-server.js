@@ -233,16 +233,6 @@ module.exports = class OnvifServer {
         };
     }
 
-    getAudioConfigurationsXml(profile, indent = '') {
-        if (!this.audioConfig.enabled) {
-            return '';
-        }
-
-        return `
-${this.createAudioSourceConfigurationXml(profile, 'tt:AudioSourceConfiguration', indent)}
-${this.createAudioEncoderConfigurationXml(profile, 'tt:AudioEncoderConfiguration', indent)}`;
-    }
-
     getDeviceServiceXAddr() {
         return `http://${this.config.hostname}:${this.config.ports.server}/onvif/device_service`;
     }
@@ -343,10 +333,20 @@ ${indent}</${elementName}>`;
     }
 
     createProfileXml(profile, elementName = 'trt:Profile', indent = '') {
+        // The ONVIF schema defines the Profile type as an xs:sequence:
+        // Name, VideoSourceConfiguration, AudioSourceConfiguration,
+        // VideoEncoderConfiguration, AudioEncoderConfiguration.
+        const audioSourceXml = this.audioConfig.enabled
+            ? `\n${this.createAudioSourceConfigurationXml(profile, 'tt:AudioSourceConfiguration', `${indent}    `)}`
+            : '';
+        const audioEncoderXml = this.audioConfig.enabled
+            ? `\n${this.createAudioEncoderConfigurationXml(profile, 'tt:AudioEncoderConfiguration', `${indent}    `)}`
+            : '';
+
         return `${indent}<${elementName} token="${profile.token}">
 ${indent}    <tt:Name>${profile.Name}</tt:Name>
-${this.createVideoSourceConfigurationXml(profile, 'tt:VideoSourceConfiguration', `${indent}    `)}
-${this.createVideoEncoderConfigurationXml(profile, 'tt:VideoEncoderConfiguration', `${indent}    `)}${this.getAudioConfigurationsXml(profile, `${indent}    `)}
+${this.createVideoSourceConfigurationXml(profile, 'tt:VideoSourceConfiguration', `${indent}    `)}${audioSourceXml}
+${this.createVideoEncoderConfigurationXml(profile, 'tt:VideoEncoderConfiguration', `${indent}    `)}${audioEncoderXml}
 ${indent}</${elementName}>`;
     }
 
@@ -557,6 +557,32 @@ ${profilesXml}
                     </trt:VideoSources>
                 </trt:GetVideoSourcesResponse>
             `);
+        } else if (soapBody.includes('GetVideoSourceConfigurationOptions')) {
+            return this.createSoapEnvelope(`
+                <trt:GetVideoSourceConfigurationOptionsResponse>
+                    <trt:Options>
+                        <tt:BoundsRange>
+                            <tt:XRange>
+                                <tt:Min>0</tt:Min>
+                                <tt:Max>0</tt:Max>
+                            </tt:XRange>
+                            <tt:YRange>
+                                <tt:Min>0</tt:Min>
+                                <tt:Max>0</tt:Max>
+                            </tt:YRange>
+                            <tt:WidthRange>
+                                <tt:Min>${this.videoSource.Resolution.Width}</tt:Min>
+                                <tt:Max>${this.videoSource.Resolution.Width}</tt:Max>
+                            </tt:WidthRange>
+                            <tt:HeightRange>
+                                <tt:Min>${this.videoSource.Resolution.Height}</tt:Min>
+                                <tt:Max>${this.videoSource.Resolution.Height}</tt:Max>
+                            </tt:HeightRange>
+                        </tt:BoundsRange>
+                        <tt:VideoSourceTokensAvailable>${this.videoSource.token}</tt:VideoSourceTokensAvailable>
+                    </trt:Options>
+                </trt:GetVideoSourceConfigurationOptionsResponse>
+            `);
         } else if (soapBody.includes('GetVideoSourceConfigurations')) {
             const configsXml = this.profiles.map(profile => this.createVideoSourceConfigurationXml(profile, 'trt:Configurations', '                    ')).join('\n');
 
@@ -649,6 +675,14 @@ ${this.createVideoEncoderConfigurationXml(profile, 'trt:Configuration', '       
             return this.createSoapEnvelope(`
                 <trt:GetAudioSourcesResponse>${sourcesXml}
                 </trt:GetAudioSourcesResponse>
+            `);
+        } else if (soapBody.includes('GetAudioSourceConfigurationOptions')) {
+            return this.createSoapEnvelope(`
+                <trt:GetAudioSourceConfigurationOptionsResponse>
+                    <trt:Options>
+                        <tt:InputTokensAvailable>${this.audioSource.token}</tt:InputTokensAvailable>
+                    </trt:Options>
+                </trt:GetAudioSourceConfigurationOptionsResponse>
             `);
         } else if (soapBody.includes('GetAudioSourceConfigurations')) {
             const configsXml = this.audioConfig.enabled
@@ -963,10 +997,8 @@ ${this.createAudioSourceConfigurationXml(profile, 'trt:Configuration', '        
                                         <d:Types>dn:NetworkVideoTransmitter</d:Types>
                                         <d:Scopes>
                                             onvif://www.onvif.org/type/video_encoder
-                                            onvif://www.onvif.org/type/ptz
-                                            onvif://www.onvif.org/hardware/onvif
+                                            onvif://www.onvif.org/hardware/rtsp-to-onvif
                                             onvif://www.onvif.org/name/${escapeXml(encodeURIComponent(this.config.name))}
-                                            onvif://www.onvif.org/location/
                                         </d:Scopes>
                                         <d:XAddrs>${escapeXml(this.getDeviceServiceXAddr())}</d:XAddrs>
                                         <d:MetadataVersion>1</d:MetadataVersion>
